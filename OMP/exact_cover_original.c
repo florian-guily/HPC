@@ -53,55 +53,12 @@ static const char DIGITS[62] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
                                 'U', 'V', 'W', 'X', 'Y', 'Z'};
 
 
-context_t *copy_context(context_t *source, const instance_t *instance) {
-    context_t *destination = malloc(sizeof(context_t));
-    if (destination == NULL)
-        err(1, "impossible d'allouer un contexte");
-    destination->level = 0;
-    destination->nodes = 0;
-    destination->solutions = 0;
-    int n = instance->n_items;
-    int m = instance->n_options;
-
-    destination->active_options = malloc(n * sizeof(*destination->active_options));
-    destination->chosen_options = malloc(n * sizeof(*destination->chosen_options));
-    destination->child_num      = malloc(n * sizeof(*destination->child_num));
-    destination->num_children   = malloc(n * sizeof(*destination->num_children));
-    if (!destination->active_options || !destination->chosen_options || !destination->child_num || !destination->num_children)
-        err(1, "Erreur dans l'allocation du context_copy");
-    
-    
-/*
-    ctx->active_options = malloc(n * sizeof(*ctx->active_options));
-    ctx->chosen_options = malloc(n * sizeof(*ctx->chosen_options));
-    ctx->child_num = malloc(n * sizeof(*ctx->child_num));
-    ctx->num_children = malloc(n * sizeof(*ctx->num_children));
-    if (ctx->active_options == NULL || ctx->chosen_options == NULL || ctx->child_num == NULL || ctx->num_children == NULL)
-        err(1, "impossible d'allouer le contexte");
-    ctx->active_items = sparse_array_init(n);
-    for (int item = 0; item < instance->n_primary; item++)
-        sparse_array_add(ctx->active_items, item);
-
-    for (int item = 0; item < n; item++)
-        ctx->active_options[item] = sparse_array_init(m);
-    for (int option = 0; option < m; option++)
-        for (int k = instance->ptr[option]; k < instance->ptr[option + 1]; k++) {
-            int item = instance->options[k];
-            sparse_array_add(ctx->active_options[item], option);
-        }
-
-
-    return ctx;
-    TO FINISH, NEED TO COPY OR SMTH
-    */
-}
-
-
 double wtime() {
     struct timeval ts;
     gettimeofday(&ts, NULL);
     return (double) ts.tv_sec + ts.tv_usec / 1e6;
 }
+
 
 void usage(char **argv) {
     printf("%s --in FILENAME [OPTIONS]\n\n", argv[0]);
