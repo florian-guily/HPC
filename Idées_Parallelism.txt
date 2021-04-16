@@ -1,0 +1,38 @@
+Mise en place en mémoire de matrices de stockage de sous-niveau
+	Si 1-2-all a échoué, alors 1-x-2 échouera
+	Dès qu'une option a été exhaustivement faite, la retirer du sous-niveau précédent
+		Plus ou moins récursif, on peut éliminer une option d'un sous-sous-niveau si on l'a tenté exhaustivement sur son sous-sous-sous-niveau
+
+
+Checkpoint:
+	- Avec les matrices de sous-niveau, permet d'expliquer quels sont les options non valides ensemble
+		* Si on n'envoie l'information que quand on en a éliminé sur un sous-niveau, on risque de faire des sauvegardes très éloignées
+		* Si on en envoie dès qu'on élimine sur un sous-sous-sous-niveau, on va passer notre temps à sauvegarder => Ralentit inutilement le système ?
+	- Dès qu'on a fini une branche, on peut envoyer ce fait => Communication peu fréquente, équivalent au système de sous-niveau
+		* Si on envoie dès qu'on finit une sous-...-sous-branche, même problème éventuel qu'au-dessus
+		* Comment on sauvegarde où ce qui a été fait ?
+	*- Le plus vraisemblable est d'écrire un ficher .tmp qui possède certaines informations 
+			=> Quelles options sont incompatibles (options 'éliminées' d'une branche)
+			=> Quelles sont les branches testées intégralement pour l'instant (Comment ?)
+			=> Quels sont les résultats valides obtenus (Nombre de lignes valides, puis les lignes en question ?)
+
+
+Communication parallèle : 
+	- Diviser en branches principales, les passer à chaque cluster de machines
+		* Chaque cluster divise ses sous-branches à ses machines (? Risque de se retrouver avec trop de maîtres pour trop peu d'esclaves ?)
+		* Chaque machine divise ses sous-branches en omp (Si les machines du cluster peuvent communiquer via ça, maybe à garder)
+		* Le maître se prépare toujours à recevoir des données, jusqu'à exhaustion du système (lorsque tout a été exploré ?)
+			=> À chaque réception d'information, il attend un "Voici les succès" ou "J'ai fini telle branche"
+				En cas de succès, il le rajoute juste à ses informations de succès
+				En cas de "J'ai fini", il envoie une branche supplémentaire (sous-branche si on se rapproche de la fin ? Récursivement ? Cher en communication si récusrif, temps perdu pour une branche longue si envoi d'une branche) 
+					Exhaustion d'une option à chaque fois ? => Si on connait tous les succès incluant 1, pas besoin de continuer à chercher avec lui
+					Dans ce cas, il faudrait pouvoir avertir les processus en cours de ce fait
+						? Présence de contremaîtres, et existence d'une variable globale pour tous les threads, plus un compteur, leur indiquant d'éventuelles options à supprimer (et ils utilisent le compteur pour dire qu'ils ont lu) => Si aucune mémoire n'est partagée sur un cluster, problème : Il faudrait qu'ils attendent la récupération d'un message, et qu'ils travaillent : Incompatible
+
+
+Condition sur les tasks
+
+Compréhension du code : 
+	No more leaks
+	
+	Objets secondaires ?
