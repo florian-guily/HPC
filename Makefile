@@ -10,7 +10,7 @@ DEPFLAGS    = -MT $@ -MMD -MP -MF $*.Td
 POSTCOMPILE = mv -f $*.Td $*.d && touch $@
 
 ISDBGFLAG := $(filter test, $(MAKECMDGOALS))
-REALFLAGS  = $(if $(ISDBGFLAG), $(CFLAGS), $(RLSFLAGS))
+REALFLAGS  = $(if $(ISDBGFLAG), $(DBGFLAGS), $(RLSFLAGS))
 
 OMPDIR    := OMP
 MPIDIR    := MPI
@@ -33,7 +33,6 @@ OMMPPITRGT := $(OMMPPIDIR)/exact_cover.exe #$(OMMPPIDIR)/exact_cover_server.exe
 all: $(OMPTRGT) $(MPITRGT) $(OMMPPITRGT)
 
 %.exe: %.c %.d
-	echo $@
 	$(COMPILE) -o $@ $<
 	$(POSTCOMPILE)
 

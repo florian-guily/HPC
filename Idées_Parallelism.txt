@@ -1,7 +1,7 @@
 Mise en place en mémoire de matrices de stockage de sous-niveau
 	Si 1-2-all a échoué, alors 1-x-2 échouera
 	Dès qu'une option a été exhaustivement faite, la retirer du sous-niveau précédent
-		Plus ou moins récursif, on peut éliminer une option d'un sous-sous-niveau si on l'a tenté exhaustivement sur son sous-sous-sous-niveau
+		Plus ou moins récursif, on peut éliminer une option d'un sous-sous-niveau si on l'a tentée exhaustivement sur son sous-sous-sous-niveau
 
 
 Checkpoint:

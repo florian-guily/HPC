@@ -53,15 +53,44 @@ static const char DIGITS[62] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
                                 'U', 'V', 'W', 'X', 'Y', 'Z'};
 
 
-context_t *copy_context(context_t *source, const instance_t *instance) {
+sparse_array_t *copy_sparse_array(const sparse_array_t *source) {
+    sparse_array_t *destination = malloc(sizeof(sparse_array_t));
+    if (!destination)
+        err(1, "Erreur dans l'allocation du copy_array");
+    int capacity = source->capacity;
+
+    destination->len = source->len;
+    destination->capacity = capacity;
+
+    destination->p = malloc(capacity * sizeof(int));
+    destination->q = malloc(capacity * sizeof(int));
+    int *p = destination->p;
+    int *q = destination->q;
+    if (!p || !q)
+        err(1, "Erreur dans l'allocation du copy_array, arrays");
+
+    int *srcP = source->p;
+    int *srcQ = source->q;
+    for (int i = 0 ; i < capacity ; ++i) {
+        *p++ = *srcP++;
+        *q++ = *srcQ++;
+    }
+    return destination;
+}
+
+void free_sparse_array(sparse_array_t **target) {
+    free((*target)->p);
+    free((*target)->q);
+    free(*target);
+}
+
+context_t *copy_context(context_t *source, int n) { /*n = instance->n_items */
     context_t *destination = malloc(sizeof(context_t));
     if (destination == NULL)
         err(1, "impossible d'allouer un contexte");
-    destination->level = 0;
-    destination->nodes = 0;
-    destination->solutions = 0;
-    int n = instance->n_items;
-    int m = instance->n_options;
+    destination->level = source->level;
+    destination->nodes = source->nodes;
+    destination->solutions = source->solutions;
 
     destination->active_options = malloc(n * sizeof(*destination->active_options));
     destination->chosen_options = malloc(n * sizeof(*destination->chosen_options));
@@ -70,30 +99,26 @@ context_t *copy_context(context_t *source, const instance_t *instance) {
     if (!destination->active_options || !destination->chosen_options || !destination->child_num || !destination->num_children)
         err(1, "Erreur dans l'allocation du context_copy");
     
-    
-/*
-    ctx->active_options = malloc(n * sizeof(*ctx->active_options));
-    ctx->chosen_options = malloc(n * sizeof(*ctx->chosen_options));
-    ctx->child_num = malloc(n * sizeof(*ctx->child_num));
-    ctx->num_children = malloc(n * sizeof(*ctx->num_children));
-    if (ctx->active_options == NULL || ctx->chosen_options == NULL || ctx->child_num == NULL || ctx->num_children == NULL)
-        err(1, "impossible d'allouer le contexte");
-    ctx->active_items = sparse_array_init(n);
-    for (int item = 0; item < instance->n_primary; item++)
-        sparse_array_add(ctx->active_items, item);
+    destination->active_items = copy_sparse_array(source->active_items);
+    for (int i = 0 ; i < n ; ++i) {
+        destination->active_options[i] = copy_sparse_array(source->active_options[i]);
+        destination->chosen_options[i] = source->chosen_options[i];
+        destination->child_num[i]      = source->child_num[i];
+        destination->num_children[i]   = source->num_children[i];
+    }
+    return destination;
+}
 
-    for (int item = 0; item < n; item++)
-        ctx->active_options[item] = sparse_array_init(m);
-    for (int option = 0; option < m; option++)
-        for (int k = instance->ptr[option]; k < instance->ptr[option + 1]; k++) {
-            int item = instance->options[k];
-            sparse_array_add(ctx->active_options[item], option);
-        }
+void free_context(context_t **target, int n) {
+    for (int i = 0 ; i < n ; ++i)
+        free_sparse_array(&((*target)->active_options[i]));
+    free((*target)->active_options);
+    free((*target)->chosen_options);
+    free((*target)->child_num);
+    free((*target)->num_children);
+    free_sparse_array(&(*target)->active_items);
 
-
-    return ctx;
-    TO FINISH, NEED TO COPY OR SMTH
-    */
+    free(*target);
 }
 
 
@@ -538,29 +563,15 @@ void solve(const instance_t *instance, context_t *ctx) {
     uncover(instance, ctx, chosen_item);                      /* backtrack */
 }
 
-void free_ressources(instance_t *instance, context_t *context) {
-    for (unsigned int i = 0 ; i < instance->n_items ; ++i) {
-    	free(context->active_options[i]->p);
-    	free(context->active_options[i]->q);
-    	free(context->active_options[i]);
-		free(instance->item_name[i]);
-    }
+void free_instance(instance_t *instance) {
+    for (int i = 0 ; i < instance->n_items ; ++i)
+        free(instance->item_name[i]);
 
     free(instance->item_name);
     free(instance->ptr);
     free(instance->options);
 
-	free(context->active_items->p);
-	free(context->active_items->q);
-	free(context->active_items);
-    free(context->active_options);
-    free(context->chosen_options);
-    free(context->child_num);
-    free(context->num_children);
-
-
-	free(instance);
-	free(context);
+    free(instance);
 }
 
 int main(int argc, char **argv) {
@@ -598,11 +609,38 @@ int main(int argc, char **argv) {
 
     instance_t * instance = load_matrix(in_filename);
     context_t * ctx = backtracking_setup(instance);
+
+{
+    context_t * ctxCopy = copy_context(ctx, instance->n_items);
+        {
+            for (int i = 0 ; i < instance->n_items ; ++i) {
+                if ((ctx->active_options[i]->len != ctxCopy->active_options[i]->len)
+                    || (ctx->active_options[i]->capacity != ctxCopy->active_options[i]->capacity)
+                    || (ctx->chosen_options[i] != 
+                        ctxCopy->chosen_options[i])
+                    || (ctx->child_num[i] != 
+                        ctxCopy->child_num[i])
+                    || (ctx->num_children[i] != 
+                        ctxCopy->num_children[i]))
+                    printf("ERREEUEURUURURUUEUUUR");
+                for (int j = 0 ; j < ctx->active_options[i]->capacity ; ++j)
+                    if ((ctx->active_options[i]->p[j] != 
+                        ctxCopy->active_options[i]->p[j])
+                        || (ctx->active_options[i]->q[j] != ctxCopy->active_options[i]->q[j]))
+                        printf("FHIEBHGBEHGBHEBGB");
+            }
+        }
+    free_context(&ctxCopy, instance->n_items);
+}
+
+
+/*
     start = wtime();
     solve(instance, ctx);
     printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
-
-    free_ressources(instance, ctx);
+*/
+    free_context(&ctx, instance->n_items);
+    free_instance(instance);
     exit(EXIT_SUCCESS);
 }
 
