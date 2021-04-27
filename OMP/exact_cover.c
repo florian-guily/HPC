@@ -636,6 +636,7 @@ int main(int argc, char **argv) {
 
 
     start = wtime();
+    #pragma omp task
     solve(instance, ctx);
     printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
 
