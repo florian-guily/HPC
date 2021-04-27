@@ -6,6 +6,7 @@
 #include <err.h>
 #include <getopt.h>
 #include <sys/time.h>
+#include <omp.h>
 
 
 double start = 0.0;
@@ -610,35 +611,34 @@ int main(int argc, char **argv) {
     instance_t * instance = load_matrix(in_filename);
     context_t * ctx = backtracking_setup(instance);
 
-{
-    context_t * ctxCopy = copy_context(ctx, instance->n_items);
-        {
-            for (int i = 0 ; i < instance->n_items ; ++i) {
-                if ((ctx->active_options[i]->len != ctxCopy->active_options[i]->len)
-                    || (ctx->active_options[i]->capacity != ctxCopy->active_options[i]->capacity)
-                    || (ctx->chosen_options[i] != 
-                        ctxCopy->chosen_options[i])
-                    || (ctx->child_num[i] != 
-                        ctxCopy->child_num[i])
-                    || (ctx->num_children[i] != 
-                        ctxCopy->num_children[i]))
-                    printf("ERREEUEURUURURUUEUUUR");
-                for (int j = 0 ; j < ctx->active_options[i]->capacity ; ++j)
-                    if ((ctx->active_options[i]->p[j] != 
-                        ctxCopy->active_options[i]->p[j])
-                        || (ctx->active_options[i]->q[j] != ctxCopy->active_options[i]->q[j]))
-                        printf("FHIEBHGBEHGBHEBGB");
+    {
+        context_t * ctxCopy = copy_context(ctx, instance->n_items);
+            {
+                for (int i = 0 ; i < instance->n_items ; ++i) {
+                    if ((ctx->active_options[i]->len != ctxCopy->active_options[i]->len)
+                        || (ctx->active_options[i]->capacity != ctxCopy->active_options[i]->capacity)
+                        || (ctx->chosen_options[i] != 
+                            ctxCopy->chosen_options[i])
+                        || (ctx->child_num[i] != 
+                            ctxCopy->child_num[i])
+                        || (ctx->num_children[i] != 
+                            ctxCopy->num_children[i]))
+                        printf("ERREEUEURUURURUUEUUUR");
+                    for (int j = 0 ; j < ctx->active_options[i]->capacity ; ++j)
+                        if ((ctx->active_options[i]->p[j] != 
+                            ctxCopy->active_options[i]->p[j])
+                            || (ctx->active_options[i]->q[j] != ctxCopy->active_options[i]->q[j]))
+                            printf("FHIEBHGBEHGBHEBGB");
+                }
             }
-        }
-    free_context(&ctxCopy, instance->n_items);
-}
+        free_context(&ctxCopy, instance->n_items);
+    }
 
 
-/*
     start = wtime();
     solve(instance, ctx);
     printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
-*/
+
     free_context(&ctx, instance->n_items);
     free_instance(instance);
     exit(EXIT_SUCCESS);
