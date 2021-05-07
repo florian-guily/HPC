@@ -16,6 +16,8 @@ bool print_solutions = false;          // affiche chaque solution
 long long report_delta = 1e6;          // affiche un rapport tous les ... noeuds
 long long next_report;                 // prochain rapport affiché au noeud...
 long long max_solutions = 0x7fffffffffffffff;        // stop après ... solutions
+int max_threads = 100;
+int nb_threads = 0;
 
 
 typedef struct instance_t {
@@ -89,8 +91,11 @@ context_t *copy_context(context_t *source, int n) { /*n = instance->n_items */
     context_t *destination = malloc(sizeof(context_t));
     if (destination == NULL)
         err(1, "impossible d'allouer un contexte");
+    //#pragma omp atomic read
     destination->level = source->level;
+    //#pragma omp atomic read
     destination->nodes = source->nodes;
+    //#pragma omp atomic read
     destination->solutions = source->solutions;
 
     destination->active_options = malloc(n * sizeof(*destination->active_options));
@@ -103,8 +108,11 @@ context_t *copy_context(context_t *source, int n) { /*n = instance->n_items */
     destination->active_items = copy_sparse_array(source->active_items);
     for (int i = 0 ; i < n ; ++i) {
         destination->active_options[i] = copy_sparse_array(source->active_options[i]);
+        #pragma omp atomic read
         destination->chosen_options[i] = source->chosen_options[i];
+        #pragma omp atomic read
         destination->child_num[i]      = source->child_num[i];
+        #pragma omp atomic read
         destination->num_children[i]   = source->num_children[i];
     }
     return destination;
@@ -537,7 +545,7 @@ context_t * backtracking_setup(const instance_t *instance) {
     return ctx;
 }
 
-void solve(const instance_t *instance, context_t *ctx) {
+void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
     ctx->nodes++;
     if (ctx->nodes == next_report)
         progress_report(ctx);
@@ -547,19 +555,45 @@ void solve(const instance_t *instance, context_t *ctx) {
     }
     int chosen_item = choose_next_item(ctx);
     sparse_array_t *active_options = ctx->active_options[chosen_item];
-    if (sparse_array_empty(active_options))
-        return;           /* échec : impossible de couvrir chosen_item */
+    if (sparse_array_empty(active_options)) {
+        //printf("c fini au level = %d\n", ctx->level);
+        return;
+    }           /* échec : impossible de couvrir chosen_item */
     cover(instance, ctx, chosen_item);
     ctx->num_children[ctx->level] = active_options->len;
-
+    bool limit = nb_threads > max_threads;
+    context_t *ctxCopy;
+    //printf("level = %d thread %d\n", ctx->level, omp_get_thread_num());
     for (int k = 0; k < active_options->len; k++) {
-        int option = active_options->p[k];
-        ctx->child_num[ctx->level] = k;
-        choose_option(instance, ctx, option, chosen_item);
-        solve(instance, ctx);
-        if (ctx->solutions >= max_solutions)
-            return;
-        unchoose_option(instance, ctx, option, chosen_item);
+        if(limit){
+            int option = active_options->p[k];
+            ctx->child_num[ctx->level] = k;
+            choose_option(instance, ctx, option, chosen_item);
+            solve(instance, ctx, realContext);
+            // if (ctx->solutions >= max_solutions)
+            //     return;
+            unchoose_option(instance, ctx, option, chosen_item);
+        }
+        else {
+            context_t *ctxCopy = copy_context(ctx, instance->n_items);
+            #pragma omp task
+            {
+                #pragma omp atomic
+                nb_threads++;
+                int option = active_options->p[k];
+                ctxCopy->child_num[ctxCopy->level] = k;
+                choose_option(instance, ctxCopy, option, chosen_item);
+                solve(instance, ctxCopy, realContext);
+                // if (ctx->solutions >= max_solutions)
+                //     return;
+                unchoose_option(instance, ctxCopy, option, chosen_item);
+                #pragma omp atomic
+                realContext->solutions += ctxCopy->solutions;
+                // free_context(&ctxCopy, instance->n_items);
+                #pragma omp atomic
+                nb_threads--;
+            }
+        }
     }
     uncover(instance, ctx, chosen_item);                      /* backtrack */
 }
@@ -580,23 +614,21 @@ void first_solve(const instance_t *instance, context_t *ctx) {
     ctx->num_children[ctx->level] = active_options->len;
     // bool abort = false;
     printf("opt actives : %d\n", active_options->len);
+
     #pragma omp parallel for schedule(dynamic)
     for (int k = 0; k < active_options->len; k++) {
         // printf("je suis dans le for thread num = %d\n", omp_get_thread_num());
-/*         #pragma omp flush (abort)
-        if (!abort){ */
-            context_t * ctxCopy = copy_context(ctx, instance->n_items);
-            ctxCopy-> solutions = 0;
-            int option = active_options->p[k];
-            ctxCopy->child_num[ctxCopy->level] = k;
-            choose_option(instance, ctxCopy, option, chosen_item);
-            //#pragma omp single
-            {solve(instance, ctxCopy);}
-            /* if (ctxCopy->solutions >= max_solutions) {
-                abort = true;
-                #pragma opm flush (abort)
-            } */
-            unchoose_option(instance, ctxCopy, option, chosen_item);
+        context_t * ctxCopy = copy_context(ctx, instance->n_items);
+        ctxCopy-> solutions = 0;
+        int option = active_options->p[k];
+        ctxCopy->child_num[ctxCopy->level] = k;
+        choose_option(instance, ctxCopy, option, chosen_item);
+        solve(instance, ctxCopy, NULL);
+        /* if (ctxCopy->solutions >= max_solutions) {
+            abort = true;
+            #pragma opm flush (abort)
+        } */
+        unchoose_option(instance, ctxCopy, option, chosen_item);
         //}
 
         ctx->solutions += ctxCopy->solutions;
@@ -678,8 +710,12 @@ int main(int argc, char **argv) {
 
 
     start = wtime();
-        // context_t * ctxCopy = copy_context(ctx, instance->n_items);
-        first_solve(instance, ctx);
+    #pragma omp parallel 
+    {
+        context_t * ctxCopy = copy_context(ctx, instance->n_items);
+        #pragma omp single
+        {solve(instance, ctxCopy, ctx);}
+    }
     printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
 
     free_context(&ctx, instance->n_items);
