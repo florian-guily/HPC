@@ -586,6 +586,7 @@ void first_solve(const instance_t *instance, context_t *ctx) {
 /*         #pragma omp flush (abort)
         if (!abort){ */
             context_t * ctxCopy = copy_context(ctx, instance->n_items);
+            ctxCopy-> solutions = 0;
             int option = active_options->p[k];
             ctxCopy->child_num[ctxCopy->level] = k;
             choose_option(instance, ctxCopy, option, chosen_item);
@@ -597,6 +598,8 @@ void first_solve(const instance_t *instance, context_t *ctx) {
             } */
             unchoose_option(instance, ctxCopy, option, chosen_item);
         //}
+
+        ctx->solutions += ctxCopy->solutions;
     }
     /* if (abort)
         return; */
