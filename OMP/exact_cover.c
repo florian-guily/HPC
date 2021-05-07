@@ -580,7 +580,7 @@ void first_solve(const instance_t *instance, context_t *ctx) {
     ctx->num_children[ctx->level] = active_options->len;
     // bool abort = false;
     printf("opt actives : %d\n", active_options->len);
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(dynamic)
     for (int k = 0; k < active_options->len; k++) {
         // printf("je suis dans le for thread num = %d\n", omp_get_thread_num());
 /*         #pragma omp flush (abort)
