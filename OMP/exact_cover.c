@@ -578,26 +578,28 @@ void first_solve(const instance_t *instance, context_t *ctx) {
         return;           /* échec : impossible de couvrir chosen_item */
     cover(instance, ctx, chosen_item);
     ctx->num_children[ctx->level] = active_options->len;
-    bool abort = false;
+    // bool abort = false;
+    printf("opt actives : %d\n", active_options->len);
     #pragma omp parallel for
     for (int k = 0; k < active_options->len; k++) {
         // printf("je suis dans le for thread num = %d\n", omp_get_thread_num());
-        #pragma omp flush (abort)
-        if (!abort){
+/*         #pragma omp flush (abort)
+        if (!abort){ */
             context_t * ctxCopy = copy_context(ctx, instance->n_items);
             int option = active_options->p[k];
             ctxCopy->child_num[ctxCopy->level] = k;
             choose_option(instance, ctxCopy, option, chosen_item);
-            solve(instance, ctxCopy);
-            if (ctxCopy->solutions >= max_solutions) {
+            //#pragma omp single
+            {solve(instance, ctxCopy);}
+            /* if (ctxCopy->solutions >= max_solutions) {
                 abort = true;
                 #pragma opm flush (abort)
-            }
+            } */
             unchoose_option(instance, ctxCopy, option, chosen_item);
-        }
+        //}
     }
-    if (abort)
-        return;
+    /* if (abort)
+        return; */
     uncover(instance, ctx, chosen_item);               /* backtrack */
 }
 
