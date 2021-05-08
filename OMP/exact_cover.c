@@ -16,7 +16,7 @@ bool print_solutions = false;          // affiche chaque solution
 long long report_delta = 1e6;          // affiche un rapport tous les ... noeuds
 long long next_report;                 // prochain rapport affiché au noeud...
 long long max_solutions = 0x7fffffffffffffff;        // stop après ... solutions
-int max_threads = 100;
+int max_threads = 5;
 int nb_threads = 0;
 
 
@@ -562,7 +562,7 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
     cover(instance, ctx, chosen_item);
     ctx->num_children[ctx->level] = active_options->len;
     bool limit = nb_threads > max_threads;
-    context_t *ctxCopy;
+    //context_t *ctxCopy;
     //printf("level = %d thread %d\n", ctx->level, omp_get_thread_num());
     for (int k = 0; k < active_options->len; k++) {
         if(limit){
@@ -576,10 +576,12 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
         }
         else {
             context_t *ctxCopy = copy_context(ctx, instance->n_items);
+            
             #pragma omp task
             {
                 #pragma omp atomic
                 nb_threads++;
+                active_options = ctxCopy->active_options[chosen_item];
                 int option = active_options->p[k];
                 ctxCopy->child_num[ctxCopy->level] = k;
                 choose_option(instance, ctxCopy, option, chosen_item);
@@ -589,7 +591,7 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
                 unchoose_option(instance, ctxCopy, option, chosen_item);
                 #pragma omp atomic
                 realContext->solutions += ctxCopy->solutions;
-                // free_context(&ctxCopy, instance->n_items);
+                free_context(&ctxCopy, instance->n_items);
                 #pragma omp atomic
                 nb_threads--;
             }
