@@ -16,7 +16,7 @@ exact_cover_original: exact_cover_original.c
 
 exec: exact_cover
 	./exact_cover.out --in $(INSTANCES)/matching10.ec
-	./exact_cover_original.out --in $(INSTANCES)/matching10.ec 
+	#./exact_cover_original.out --in $(INSTANCES)/matching10.ec 
 
 .PHONY: clean
 

@@ -16,8 +16,9 @@ bool print_solutions = false;          // affiche chaque solution
 long long report_delta = 1e6;          // affiche un rapport tous les ... noeuds
 long long next_report;                 // prochain rapport affiché au noeud...
 long long max_solutions = 0x7fffffffffffffff;        // stop après ... solutions
-int max_threads = 5;
-int nb_threads = 0;
+int max_tasks = 0;
+int nb_task = 0;
+int max_level = 4;
 
 
 typedef struct instance_t {
@@ -561,11 +562,11 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
     }           /* échec : impossible de couvrir chosen_item */
     cover(instance, ctx, chosen_item);
     ctx->num_children[ctx->level] = active_options->len;
-    bool limit = nb_threads > max_threads;
+    bool limit = ctx->level > max_level;
     //context_t *ctxCopy;
     //printf("level = %d thread %d\n", ctx->level, omp_get_thread_num());
     for (int k = 0; k < active_options->len; k++) {
-        if(limit){
+        if(limit || nb_task > max_tasks){
             int option = active_options->p[k];
             ctx->child_num[ctx->level] = k;
             choose_option(instance, ctx, option, chosen_item);
@@ -576,11 +577,11 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
         }
         else {
             context_t *ctxCopy = copy_context(ctx, instance->n_items);
-            
+            #pragma omp atomic
+                nb_task++;
             #pragma omp task
             {
-                #pragma omp atomic
-                nb_threads++;
+                
                 active_options = ctxCopy->active_options[chosen_item];
                 int option = active_options->p[k];
                 ctxCopy->child_num[ctxCopy->level] = k;
@@ -593,52 +594,13 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
                 realContext->solutions += ctxCopy->solutions;
                 free_context(&ctxCopy, instance->n_items);
                 #pragma omp atomic
-                nb_threads--;
+                nb_task--;
             }
         }
     }
     uncover(instance, ctx, chosen_item);                      /* backtrack */
 }
 
-void first_solve(const instance_t *instance, context_t *ctx) {
-    ctx->nodes++;
-    if (ctx->nodes == next_report)
-        progress_report(ctx);
-    if (sparse_array_empty(ctx->active_items)) {
-        solution_found(instance, ctx);
-        return;                         /* succès : plus d'objet actif */
-    }
-    int chosen_item = choose_next_item(ctx);
-    sparse_array_t *active_options = ctx->active_options[chosen_item];
-    if (sparse_array_empty(active_options))
-        return;           /* échec : impossible de couvrir chosen_item */
-    cover(instance, ctx, chosen_item);
-    ctx->num_children[ctx->level] = active_options->len;
-    // bool abort = false;
-    printf("opt actives : %d\n", active_options->len);
-
-    #pragma omp parallel for schedule(dynamic)
-    for (int k = 0; k < active_options->len; k++) {
-        // printf("je suis dans le for thread num = %d\n", omp_get_thread_num());
-        context_t * ctxCopy = copy_context(ctx, instance->n_items);
-        ctxCopy-> solutions = 0;
-        int option = active_options->p[k];
-        ctxCopy->child_num[ctxCopy->level] = k;
-        choose_option(instance, ctxCopy, option, chosen_item);
-        solve(instance, ctxCopy, NULL);
-        /* if (ctxCopy->solutions >= max_solutions) {
-            abort = true;
-            #pragma opm flush (abort)
-        } */
-        unchoose_option(instance, ctxCopy, option, chosen_item);
-        //}
-
-        ctx->solutions += ctxCopy->solutions;
-    }
-    /* if (abort)
-        return; */
-    uncover(instance, ctx, chosen_item);               /* backtrack */
-}
 
 void free_instance(instance_t *instance) {
     for (int i = 0 ; i < instance->n_items ; ++i)
@@ -686,7 +648,8 @@ int main(int argc, char **argv) {
 
     instance_t * instance = load_matrix(in_filename);
     context_t * ctx = backtracking_setup(instance);
-
+    max_tasks = omp_get_max_threads();
+    printf("max threads = %d\n", max_tasks);
     /* {
         context_t * ctxCopy = copy_context(ctx, instance->n_items);
             {
