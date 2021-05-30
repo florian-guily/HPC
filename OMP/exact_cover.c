@@ -546,31 +546,83 @@ context_t * backtracking_setup(const instance_t *instance) {
     return ctx;
 }
 
-void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
+/* void solve(const instance_t *instance, context_t *ctx, context_t *realContext, int level) {
     ctx->nodes++;
     if (ctx->nodes == next_report)
         progress_report(ctx);
     if (sparse_array_empty(ctx->active_items)) {
-        solution_found(instance, ctx);
-        return;                         /* succès : plus d'objet actif */
+         if (ctx == realContext)
+            solution_foundAtomic(instance, ctx);
+        else 
+            solution_found(instance, ctx);
+        return;                         // succès : plus d'objet actif 
+    }
+    int chosen_item = choose_next_item(ctx);
+    sparse_array_t *active_options = ctx->active_options[chosen_item];
+    if (sparse_array_empty(active_options))
+        return;           // échec : impossible de couvrir chosen_item 
+    cover(instance, ctx, chosen_item);
+    ctx->num_children[ctx->level] = active_options->len;
+
+    for (int k = 0; k < active_options->len; k++) {
+        if (nb_task < max_tasks) {
+           #pragma omp atomic
+           ++nb_task;
+            context_t *ctxCopy = copy_context(ctx, instance->n_items);
+            #pragma omp task
+            {
+                active_options = ctxCopy->active_options[chosen_item];
+                int option = active_options->p[k];
+                ctxCopy->child_num[level] = k;
+                choose_option(instance, ctxCopy, option, chosen_item);
+                solve(instance, ctxCopy, realContext, level + 1);
+                unchoose_option(instance, ctxCopy, option, chosen_item);
+                #pragma omp atomic
+                realContext->solutions += ctxCopy->solutions;
+                free_context(&ctxCopy, instance->n_items);
+                #pragma omp atomic
+                --nb_task;
+            }
+        }
+        else {
+            int option = active_options->p[k];
+            ctx->child_num[level] = k;
+            choose_option(instance, ctx, option, chosen_item);
+            solve(instance, ctx, realContext, level + 1);
+            unchoose_option(instance, ctx, option, chosen_item);
+        }
+    }
+
+    uncover(instance, ctx, chosen_item);                      // backtrack 
+} */
+
+void solve(const instance_t *instance, context_t *ctx, context_t *realContext, int level) {
+    ++realContext->nodes;
+    if (realContext->nodes == next_report)
+        progress_report(realContext);
+
+    if (sparse_array_empty(ctx->active_items)) {
+        //solution_found(instance, realContext);
+        ++ctx->solutions;
+        return;                         // succès : plus d'objet actif
     }
     int chosen_item = choose_next_item(ctx);
     sparse_array_t *active_options = ctx->active_options[chosen_item];
     if (sparse_array_empty(active_options)) {
         //printf("c fini au level = %d\n", ctx->level);
         return;
-    }           /* échec : impossible de couvrir chosen_item */
+    }           // échec : impossible de couvrir chosen_item 
     cover(instance, ctx, chosen_item);
-    ctx->num_children[ctx->level] = active_options->len;
-    bool limit = ctx->level > max_level;
+    ctx->num_children[level] = active_options->len;
+    bool limit = level > max_level;
     //context_t *ctxCopy;
     //printf("level = %d thread %d\n", ctx->level, omp_get_thread_num());
     for (int k = 0; k < active_options->len; k++) {
         if(limit || nb_task > max_tasks){
             int option = active_options->p[k];
-            ctx->child_num[ctx->level] = k;
+            ctx->child_num[level] = k;
             choose_option(instance, ctx, option, chosen_item);
-            solve(instance, ctx, realContext);
+            solve(instance, ctx, realContext, level + 1);
             // if (ctx->solutions >= max_solutions)
             //     return;
             unchoose_option(instance, ctx, option, chosen_item);
@@ -578,27 +630,25 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
         else {
             context_t *ctxCopy = copy_context(ctx, instance->n_items);
             #pragma omp atomic
-                nb_task++;
+                ++nb_task;
             #pragma omp task
-            {
-                
+            {             
                 active_options = ctxCopy->active_options[chosen_item];
                 int option = active_options->p[k];
-                ctxCopy->child_num[ctxCopy->level] = k;
+                ctxCopy->child_num[level] = k;
                 choose_option(instance, ctxCopy, option, chosen_item);
-                solve(instance, ctxCopy, realContext);
-                // if (ctx->solutions >= max_solutions)
-                //     return;
+                solve(instance, ctxCopy, realContext, level + 1);
                 unchoose_option(instance, ctxCopy, option, chosen_item);
                 #pragma omp atomic
                 realContext->solutions += ctxCopy->solutions;
                 free_context(&ctxCopy, instance->n_items);
                 #pragma omp atomic
-                nb_task--;
+                --nb_task;
             }
+            ctx->solutions = 0;
         }
     }
-    uncover(instance, ctx, chosen_item);                      /* backtrack */
+    uncover(instance, ctx, chosen_item);                      // backtrack 
 }
 
 
@@ -649,7 +699,7 @@ int main(int argc, char **argv) {
     instance_t * instance = load_matrix(in_filename);
     context_t * ctx = backtracking_setup(instance);
     max_tasks = omp_get_max_threads();
-    printf("max threads = %d\n", max_tasks);
+    printf("max tasks = %d\n", max_tasks);
     /* {
         context_t * ctxCopy = copy_context(ctx, instance->n_items);
             {
@@ -679,7 +729,7 @@ int main(int argc, char **argv) {
     {
         context_t * ctxCopy = copy_context(ctx, instance->n_items);
         #pragma omp single
-        {solve(instance, ctxCopy, ctx);}
+        {solve(instance, ctxCopy, ctx, ctx->level);}
     }
     printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
 
