@@ -663,6 +663,41 @@ void free_instance(instance_t *instance) {
     free(instance);
 }
 
+int fakeMain(int argc, char **argv, char *filename, int i) {
+
+/*
+    instance_t * instance = load_matrix(in_filename);
+    context_t * ctx = backtracking_setup(instance);
+*/
+    max_tasks = i;
+    nb_task = 0;
+    printf("max tasks = %d\n", max_tasks);
+
+    instance_t *instance = load_matrix(in_filename);
+    context_t *ctx = backtracking_setup(instance);
+    start = wtime();
+    #pragma omp parallel 
+    {
+        context_t * ctxCopy = copy_context(ctx, instance->n_items);
+        #pragma omp single
+        {solve(instance, ctxCopy, ctx, ctx->level);}
+        #pragma omp taskwait
+    }
+    printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
+
+    FILE *myFile = fopen(filename, "a");
+    if (myFile) {
+        printf("%lld\n", ctx->solutions);
+        fprintf(myFile, "%d %lf\n", i, wtime() - start);
+    }
+
+    free_context(&ctx, instance->n_items);
+    free_instance(instance);
+    printf("FINI\n");
+
+    return 0;
+}
+
 int main(int argc, char **argv) {
     struct option longopts[5] = {
         {"in", required_argument, NULL, 'i'},
@@ -694,14 +729,6 @@ int main(int argc, char **argv) {
     if (in_filename == NULL)
         usage(argv);
     next_report = report_delta;
-
-/*
-    instance_t * instance = load_matrix(in_filename);
-    context_t * ctx = backtracking_setup(instance);
-*/
-    max_tasks = omp_get_max_threads();
-    printf("max tasks = %d\n", max_tasks);
-
 
     char measureFile[101];
         {
@@ -740,26 +767,10 @@ int main(int argc, char **argv) {
         }
 
     FILE *myFile = fopen(measureFile, "w");
-    if (myFile) {
-        instance_t *instance = load_matrix(in_filename);
-        for (int i = 0 ; i < max_tasks ; ++i) {
-            omp_set_num_threads(i);
-            context_t *ctx = backtracking_setup(instance);
-            start = wtime();
+    fclose(myFile);
 
-            #pragma omp parallel
-            #pragma omp single
-            solve(instance, ctx, ctx, 0);
-            #pragma omp taskwait
-            fprintf(myFile, "%d %lf\n", i, wtime() - start);
-            free_context(&ctx, instance->n_items);
-        }
-        free_instance(instance);
+    for (int i = 0 ; i < omp_get_max_threads() ; ++i) {
+        fakeMain(argc, argv, measureFile, i);
     }
-
-    printf("FINI\n");
-
-    exit(EXIT_SUCCESS);
 }
-
 

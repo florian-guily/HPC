@@ -1178,10 +1178,7 @@ int main(int argc, char **argv) {
         ctx = broadcastContext(ctx, myRank, i, instance->n_items);
         start = wtime();
 
-        #pragma omp parallel
-        #pragma omp single
     	MPISolve(instance, ctx, myRank, i);
-        #pragma omp taskwait
         if (myFile)
             fprintf(myFile, "%d %lf\n", i, wtime() - start);
     }
