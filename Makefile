@@ -1,10 +1,11 @@
-CC := gcc
+#CC := gcc
+CC := mpicc
 
 DBGFLAGS := -g -Wall -Werror -Wextra -Wshadow -Wunreachable-code \
 -Wuninitialized -Wduplicated-cond -Wduplicated-branches -Wpedantic -m64 \
- -I /usr/include
-RLSFLAGS := -m64 -O3 -DNDEBUG -I /usr/include
-CFLAGS   := -fopenmp
+ -I /usr/include -O3
+RLSFLAGS := -O3 -DNDEBUG -I /usr/include
+CFLAGS   := -fopenmp -lmpi
 
 DEPFLAGS    = -MT $@ -MMD -MP -MF $*.Td
 POSTCOMPILE = mv -f $*.Td $*.d && touch $@
@@ -22,7 +23,8 @@ OMMPPIOBJ := $(filter-out $(OMMPPIDIR)/exact_cover_original.o, $(patsubst %.c, %
 OBJS       = $(OMPOBJ) $(MPIOBJ) $(OMMPPIOBJ)
 
 
-COMPILE = $(CC) $(REALFLAGS) $(DEPFLAGS) $(TARGET_ARCH) $(CFLAGS)
+#COMPILE 	= $(CC) $(REALFLAGS) $(DEPFLAGS) $(TARGET_ARCH) $(CFLAGS)
+COMPILE 	= $(CC) $(REALFLAGS) $(DEPFLAGS) $(TARGET_ARCH) $(CFLAGS)
 
 OMPTRGT    := $(OMPDIR)/exact_cover.exe 
 MPITRGT    := $(MPIDIR)/exact_cover.exe #$(MPIDIR)/exact_cover_server.exe

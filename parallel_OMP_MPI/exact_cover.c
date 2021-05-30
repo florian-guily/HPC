@@ -7,15 +7,25 @@
 #include <getopt.h>
 #include <sys/time.h>
 
+#include <mpi.h>
+#include <unistd.h>
+#include <omp.h>
 
 double start = 0.0;
+double timeOffset = 0.0;
 
 char *in_filename = NULL;              // nom du fichier contenant la matrice
 bool print_solutions = false;          // affiche chaque solution
 long long report_delta = 1e6;          // affiche un rapport tous les ... noeuds
 long long next_report;                 // prochain rapport affiché au noeud...
 long long max_solutions = 0x7fffffffffffffff;        // stop après ... solutions
+char saveFile[101];
+char saveFileNewName[101];
 
+int NUMBER_OF_OPTIONS_TO_START = 20;
+
+int max_tasks = 0;
+int nb_task = 0;
 
 typedef struct instance_t {
         int n_items;
@@ -53,6 +63,76 @@ static const char DIGITS[62] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
                                 'U', 'V', 'W', 'X', 'Y', 'Z'};
 
 
+sparse_array_t *copy_sparse_array(const sparse_array_t *source) {
+    sparse_array_t *destination = malloc(sizeof(sparse_array_t));
+    if (!destination)
+        err(1, "Erreur dans l'allocation du copy_array");
+    int capacity = source->capacity;
+
+    destination->len = source->len;
+    destination->capacity = capacity;
+
+    destination->p = malloc(capacity * sizeof(int));
+    destination->q = malloc(capacity * sizeof(int));
+    int *p = destination->p;
+    int *q = destination->q;
+    if (!p || !q)
+        err(1, "Erreur dans l'allocation du copy_array, arrays");
+
+    int *srcP = source->p;
+    int *srcQ = source->q;
+    for (int i = 0 ; i < capacity ; ++i) {
+        *p++ = *srcP++;
+        *q++ = *srcQ++;
+    }
+    return destination;
+}
+
+void free_sparse_array(sparse_array_t **target) {
+    free((*target)->p);
+    free((*target)->q);
+    free(*target);
+}
+
+context_t *copy_context(context_t *source, int n) { /*n = instance->n_items */
+    context_t *destination = malloc(sizeof(context_t));
+    if (destination == NULL)
+        err(1, "impossible d'allouer un contexte");
+    destination->level = source->level;
+    destination->nodes = source->nodes;
+//    destination->solutions = source->solutions;
+    destination->solutions = 0;
+
+    destination->active_options = malloc(n * sizeof(*destination->active_options));
+    destination->chosen_options = malloc(n * sizeof(*destination->chosen_options));
+    destination->child_num      = malloc(n * sizeof(*destination->child_num));
+    destination->num_children   = malloc(n * sizeof(*destination->num_children));
+    if (!destination->active_options || !destination->chosen_options || !destination->child_num || !destination->num_children)
+        err(1, "Erreur dans l'allocation du context_copy");
+    
+    destination->active_items = copy_sparse_array(source->active_items);
+    for (int i = 0 ; i < n ; ++i) {
+        destination->active_options[i] = copy_sparse_array(source->active_options[i]);
+        destination->chosen_options[i] = source->chosen_options[i];
+        destination->child_num[i]      = source->child_num[i];
+        destination->num_children[i]   = source->num_children[i];
+    }
+    return destination;
+}
+
+void free_context(context_t **target, int n) {
+    for (int i = 0 ; i < n ; ++i)
+        free_sparse_array(&((*target)->active_options[i]));
+    free((*target)->active_options);
+    free((*target)->chosen_options);
+    free((*target)->child_num);
+    free((*target)->num_children);
+    free_sparse_array(&(*target)->active_items);
+
+    free(*target);
+}
+
+
 double wtime() {
     struct timeval ts;
     gettimeofday(&ts, NULL);
@@ -66,7 +146,6 @@ void usage(char **argv) {
     printf("--progress-report N   display a message every N nodes (0 to disable)\n");
     printf("--print-solutions     display solutions when they are found\n");
     printf("--stop-after N        stop the search once N solutions are found\n");
-    exit(0);
 }
 
 
@@ -215,7 +294,7 @@ void progress_report(const context_t *ctx) {
         i++;
     }
     printf("\n"),
-    next_report += report_delta;
+    next_report = ctx->nodes + report_delta;
 }
 
 void deactivate(const instance_t *instance, context_t *ctx, int option, int covered_item);
@@ -468,7 +547,7 @@ context_t * backtracking_setup(const instance_t *instance) {
     return ctx;
 }
 
-void solve(const instance_t *instance, context_t *ctx) {
+void solve(const instance_t *instance, context_t *ctx, context_t *realContext) {
     ctx->nodes++;
     if (ctx->nodes == next_report)
         progress_report(ctx);
@@ -478,54 +557,68 @@ void solve(const instance_t *instance, context_t *ctx) {
     }
     int chosen_item = choose_next_item(ctx);
     sparse_array_t *active_options = ctx->active_options[chosen_item];
-    if (sparse_array_empty(active_options))
-        return;           /* échec : impossible de couvrir chosen_item */
+    if (sparse_array_empty(active_options)) {
+        //printf("c fini au level = %d\n", ctx->level);
+        return;
+    }           /* échec : impossible de couvrir chosen_item */
     cover(instance, ctx, chosen_item);
     ctx->num_children[ctx->level] = active_options->len;
+    //context_t *ctxCopy;
+    //printf("level = %d thread %d\n", ctx->level, omp_get_thread_num());
     for (int k = 0; k < active_options->len; k++) {
-        int option = active_options->p[k];
-        ctx->child_num[ctx->level] = k;
-        choose_option(instance, ctx, option, chosen_item);
-        solve(instance, ctx);
-        if (ctx->solutions >= max_solutions)
-            return;
-        unchoose_option(instance, ctx, option, chosen_item);
+        if(nb_task > max_tasks){
+            int option = active_options->p[k];
+            ctx->child_num[ctx->level] = k;
+            choose_option(instance, ctx, option, chosen_item);
+            solve(instance, ctx, realContext);
+            // if (ctx->solutions >= max_solutions)
+            //     return;
+            unchoose_option(instance, ctx, option, chosen_item);
+        }
+        else {
+            #pragma omp atomic
+                nb_task++;
+            context_t *ctxCopy = copy_context(ctx, instance->n_items);
+            #pragma omp task
+            {
+                
+                active_options = ctxCopy->active_options[chosen_item];
+                int option = active_options->p[k];
+                ctxCopy->child_num[ctxCopy->level] = k;
+                choose_option(instance, ctxCopy, option, chosen_item);
+                solve(instance, ctxCopy, realContext);
+                // if (ctx->solutions >= max_solutions)
+                //     return;
+                unchoose_option(instance, ctxCopy, option, chosen_item);
+                #pragma omp atomic
+                realContext->solutions += ctxCopy->solutions;
+                free_context(&ctxCopy, instance->n_items);
+                #pragma omp atomic
+                nb_task--;
+            }
+        }
     }
-
     uncover(instance, ctx, chosen_item);                      /* backtrack */
 }
 
-void free_ressources(instance_t *instance, context_t *context) {
-    for (unsigned int i = 0 ; i < instance->n_items ; ++i) {
-    	free(context->active_options[i]->p);
-    	free(context->active_options[i]->q);
-    	free(context->active_options[i]);
-		free(instance->item_name[i]);
-    }
+void free_instance(instance_t *instance) {
+    for (int i = 0 ; i < instance->n_items ; ++i)
+        free(instance->item_name[i]);
 
     free(instance->item_name);
     free(instance->ptr);
     free(instance->options);
 
-	free(context->active_items->p);
-	free(context->active_items->q);
-	free(context->active_items);
-    free(context->active_options);
-    free(context->chosen_options);
-    free(context->child_num);
-    free(context->num_children);
-
-
-	free(instance);
-	free(context);
+    free(instance);
 }
 
-int main(int argc, char **argv) {
-    struct option longopts[5] = {
+char initiation(int argc, char *argv[]) {
+    struct option longopts[6] = {
         {"in", required_argument, NULL, 'i'},
         {"progress-report", required_argument, NULL, 'v'},
         {"print-solutions", no_argument, NULL, 'p'},
         {"stop-after", required_argument, NULL, 's'},
+        {"startLim", required_argument, NULL, 'l'},
         {NULL, 0, NULL, 0}
     };
 
@@ -543,23 +636,543 @@ int main(int argc, char **argv) {
             break;
         case 'v':
             report_delta = atoll(optarg);
-            break;          
+            break;
+        case 'l':
+            NUMBER_OF_OPTIONS_TO_START = atoi(optarg);
+            break;
         default:
             errx(1, "Unknown option\n");
         }
     }
-    if (in_filename == NULL)
+    if (in_filename == NULL) {
         usage(argv);
+        return 0; //Fail
+    }
     next_report = report_delta;
+    return 1; //Success
+}
+
+int findNameLength(char *namePointer) {
+	int length = 0;
+	while (namePointer[++length] != '\0' && length < 64);
+	return length < 64 ? length : 1;
+}
+
+void sendInstance(instance_t *instance, int targetRank) {
+	int values[3] = {instance->n_items, instance->n_primary, instance->n_options};
+	MPI_Send(values, 3, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+	for (int i = 0 ; i < instance->n_items; ++i) {
+		int nameLength = findNameLength(instance->item_name[i]);
+		if (nameLength != 1) {
+			MPI_Send(&nameLength, 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+			MPI_Send(instance->item_name[i], nameLength, MPI_BYTE, targetRank, 0, MPI_COMM_WORLD);
+		}
+		else {
+			char tmp = '\0';
+			MPI_Send(&nameLength, 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+			MPI_Send(&tmp, 1, MPI_BYTE, targetRank, 0, MPI_COMM_WORLD);			
+		}
+	}
+	MPI_Send(instance->options, instance->n_options * instance->n_items, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+	MPI_Send(instance->ptr, instance->n_options + 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+}
+
+instance_t *receiveInstance() {
+	instance_t *newInstance = malloc(sizeof(instance_t));
+	int values[3];
+	MPI_Recv(values, 3, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+	newInstance->n_items = values[0];
+	newInstance->n_primary = values[1];
+	newInstance->n_options = values[2];
+
+	newInstance->item_name = malloc(newInstance->n_items * sizeof(char *));
+	newInstance->ptr = malloc((newInstance->n_options + 1) * sizeof(char *));
+	newInstance->options = malloc(newInstance->n_items * newInstance->n_options * sizeof(char *));
+
+	for (int i = 0 ; i < newInstance->n_items ; ++i) {
+		int nameLength;
+		MPI_Recv(&nameLength, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+		newInstance->item_name[i] = malloc(nameLength);
+		MPI_Recv(newInstance->item_name[i], nameLength, MPI_BYTE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+	}
+	MPI_Recv(newInstance->options, newInstance->n_options * newInstance->n_items, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+	MPI_Recv(newInstance->ptr, newInstance->n_options + 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+	return newInstance;
+}
+
+void sendSparseArray(sparse_array_t *sparseArray, int targetRank) {
+	int values[2] = {sparseArray->len, sparseArray->capacity};
+	int *arrays = malloc(2 * sparseArray->capacity * sizeof(int));
+	memcpy(arrays, sparseArray->p, sparseArray->capacity * sizeof(int));
+	memcpy(arrays + sparseArray->capacity, sparseArray->q, sparseArray->capacity * sizeof(int));
+
+	MPI_Send(values, 2, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+	MPI_Send(arrays, 2 * sparseArray->capacity, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+	free(arrays);
+}
+
+sparse_array_t *receiveSparseArray() {
+	sparse_array_t *newSparseArray = malloc(sizeof(sparse_array_t));
+	int values[2];
+	MPI_Recv(values, 2, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+	newSparseArray->len = values[0];
+	newSparseArray->capacity = values[1];
+	int *arrays = malloc(2 * newSparseArray->capacity * sizeof(int));
+	MPI_Recv(arrays, 2 * newSparseArray->capacity, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+
+	newSparseArray->p = malloc(newSparseArray->capacity * sizeof(int));
+	newSparseArray->q = malloc(newSparseArray->capacity * sizeof(int));
+	memcpy(newSparseArray->p, arrays, newSparseArray->capacity * sizeof(int));
+	memcpy(newSparseArray->q, arrays + newSparseArray->capacity, newSparseArray->capacity * sizeof(int));
+
+	free(arrays);
+	return newSparseArray;
+}
+
+void receiveOtherSparseArray(sparse_array_t *newSparseArray) {
+    int values[2];
+    MPI_Recv(values, 2, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
+    newSparseArray->len = values[0];
+    newSparseArray->capacity = values[1];
+    int *arrays = malloc(2 * newSparseArray->capacity * sizeof(int));
+    MPI_Recv(arrays, 2 * newSparseArray->capacity, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
+
+    memcpy(newSparseArray->p, arrays, newSparseArray->capacity * sizeof(int));
+    memcpy(newSparseArray->q, arrays + newSparseArray->capacity, newSparseArray->capacity * sizeof(int));
+
+    free(arrays);
+    return;
+}
+
+void copyOtherSparseArray(sparse_array_t *newSparseArray, sparse_array_t *oldSparseArray) {
+    newSparseArray->len = oldSparseArray->len;
+    newSparseArray->capacity = oldSparseArray->capacity;
+
+    memcpy(newSparseArray->p, oldSparseArray->p, newSparseArray->capacity * sizeof(int));
+    memcpy(newSparseArray->q, oldSparseArray->q, newSparseArray->capacity * sizeof(int));
+}
+
+void sendContext(context_t *contexte, int targetRank, int n) {
+	int *arrays = malloc((3 * n + 1) * sizeof(int));
+	memcpy(arrays,			contexte->chosen_options, n);
+	memcpy(arrays + n,		contexte->child_num, n);
+	memcpy(arrays + 2 * n,	contexte->num_children, n);
+	arrays[3 * n] = contexte->level;
+	MPI_Send(arrays, 3 * n + 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+
+	sendSparseArray(contexte->active_items, targetRank);
+	for (int i = 0; i < n ; ++i)
+		sendSparseArray(contexte->active_options[i], targetRank);
+
+	free(arrays);
+}
+
+context_t *receiveContext(int n) {
+	context_t *newContext = malloc(sizeof(context_t));
+
+	newContext->nodes = 0;
+	newContext->solutions = 0;
+
+	newContext->chosen_options = malloc(n * sizeof(int));
+	newContext->child_num = 	 malloc(n * sizeof(int));
+	newContext->num_children = 	 malloc(n * sizeof(int));
+	newContext->active_options = malloc(n * sizeof(sparse_array_t));
+
+	int *arrays = malloc((3 * n + 1) * sizeof(int));
+	MPI_Recv(arrays, 3 * n + 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+	memcpy(newContext->chosen_options, 	arrays, n);
+	memcpy(newContext->child_num, 		arrays + n, n);
+	memcpy(newContext->num_children, 	arrays + 2 * n, n);
+	newContext->level = arrays[3 * n];
+
+	newContext->active_items = receiveSparseArray();
+	for (int i = 0 ; i < n ; ++i)
+		newContext->active_options[i] = receiveSparseArray();
+
+	free(arrays);
+	return newContext;
+}
+
+void sendOptions(context_t *contexte, int targetRank, int n) {
+    int *temporary = malloc((n + 1) * sizeof(int));
+    memcpy(temporary, contexte->chosen_options, n);
+    temporary[n] = contexte->level;
+    MPI_Send(temporary, n + 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+
+    free(temporary);
+}
+
+void receiveOptions(instance_t *instance, context_t *newContext, int n) {
+    int *temporary = malloc((n + 1) * sizeof(int));
+    MPI_Recv(temporary, n + 1, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
+    memcpy(newContext->chosen_options, temporary, n);
+    newContext->level = temporary[n];
+
+    for (int i = 0 ; i < temporary[n] ; ++i) {
+        int option = newContext->chosen_options[i];
+        for (int p = instance->ptr[option]; p < instance->ptr[option + 1]; ++p) {
+            int item = instance->options[p];
+            cover(instance, newContext, item);
+        }
+    }
+    free(temporary);
+}
+
+void receiveOtherContext(instance_t *instance, context_t *newContext, context_t *oldContext, int n) {
+    newContext->nodes = 0;
+    newContext->solutions = 0;
+    newContext->level = 0;
+
+    memcpy(newContext->chosen_options,  oldContext->chosen_options, n);
+    memcpy(newContext->child_num,       oldContext->child_num, n);
+    memcpy(newContext->num_children,    oldContext->num_children, n);
+
+    copyOtherSparseArray(newContext->active_items, oldContext->active_items);
+    for (int i = 0 ; i < n ; ++i)
+        copyOtherSparseArray(newContext->active_options[i], oldContext->active_options[i]);
+
+    receiveOptions(instance, newContext, n);
+
+    return;
+}
+/*
+void receiveOtherContext(context_t *newContext, int n) {
+    newContext->nodes = 0;
+    newContext->solutions = 0;
+
+    int *arrays = malloc((3 * n + 1) * sizeof(int));
+    MPI_Recv(arrays, 3 * n + 1, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
+    memcpy(newContext->chosen_options,  arrays, n);
+    memcpy(newContext->child_num,       arrays + n, n);
+    memcpy(newContext->num_children,    arrays + 2 * n, n);
+    newContext->level = arrays[3 * n];
+
+    newContext->active_items = receiveOtherSparseArray();
+    for (int i = 0 ; i < n ; ++i)
+        newContext->active_options[i] = receiveOtherSparseArray();
+
+    free(arrays);
+    return;
+}
+*/
+instance_t *broadcastInstance(instance_t *instance, int myRank, int processusNumber) {
+	if (myRank)
+		instance = receiveInstance();
+	int currentTarget = 1;
+	while (currentTarget <= myRank)
+		currentTarget *= 2;
+	while (currentTarget + myRank < processusNumber) {
+		sendInstance(instance, myRank + currentTarget);
+		currentTarget *= 2;
+	}
+	return instance;
+}
+
+context_t *broadcastContext(context_t *context, int myRank, int processusNumber, int n) {
+    if (myRank)
+        context = receiveContext(n);
+    int currentTarget = 1;
+    while (currentTarget <= myRank)
+        currentTarget *= 2;
+    while (currentTarget + myRank < processusNumber) {
+        sendContext(context, myRank + currentTarget, n);
+        currentTarget *= 2;
+    }
+    return context;
+}
+
+#define willingToWork 1
+#define gotResults 2
+#define MAXLEVEL 2
 
 
-    instance_t * instance = load_matrix(in_filename);
-    context_t * ctx = backtracking_setup(instance);
-    start = wtime();
-    solve(instance, ctx);
-    printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
+void saveStatus(int *arrayIfDone, int maxValue) {
+    FILE *myFile = fopen(saveFile, "w");
+    fprintf(myFile, "%lf\n", wtime() - start + timeOffset);
+    fprintf(myFile, "%d\n", maxValue);
+    for (int i = 0 ; i < maxValue ; ++i)
+        fprintf(myFile, "%d ", arrayIfDone[i]);
+    fclose(myFile);
 
-    free_ressources(instance, ctx);
+    if (rename(saveFile, saveFileNewName))
+        printf("Unable to rename file\n");
+}
+
+char recoverStatus(int **arrayIfDone) {
+    int temporary_numberOfElemens = NUMBER_OF_OPTIONS_TO_START;
+    FILE *myFile = fopen(saveFileNewName, "r");
+    if (myFile) {
+        if (!fscanf(myFile, "%lf", &timeOffset)) {
+            printf("Error while reading the time already spent\n");
+        }
+        if (!fscanf(myFile, "%d", &NUMBER_OF_OPTIONS_TO_START)) {
+            printf("Error while reading the number of elements\n");
+            NUMBER_OF_OPTIONS_TO_START = temporary_numberOfElemens;
+            return 0;
+        }
+        *arrayIfDone = malloc(NUMBER_OF_OPTIONS_TO_START * sizeof(int));
+        for (int i = 0 ; i < NUMBER_OF_OPTIONS_TO_START ; ++i)
+            if (!fscanf(myFile, "%d", &((*arrayIfDone)[i]))) {
+                printf("Error while reading values\n");
+                free(*arrayIfDone);
+                return 0;
+        }
+        printf("%lf", wtime() - start + timeOffset);
+        return 1;
+    }
+    return 0;
+}
+
+context_t **initMPISolve(instance_t *instance, context_t *ctx, int *queueLength) {
+    context_t **queue = malloc((2048 + NUMBER_OF_OPTIONS_TO_START) * sizeof(context_t*)); //Surralocation, making sure we can stock it
+    int n_items = instance->n_items;
+    queue[0] = copy_context(ctx, n_items);
+    int currentNumber = 1;  //How many contexts we currently have
+    int currentSize = 1;    //Before adding new ones, how many did we have
+
+    while (currentNumber < NUMBER_OF_OPTIONS_TO_START) {
+        for (int i = 0 ; i < currentSize ; ++i) {
+            if (sparse_array_empty(queue[i]->active_items)) {
+                ++ctx->solutions;
+                free_context(&queue[i], instance->n_items);
+                if (currentNumber == 1)
+                    break; //We found every single solution there was, while initiating :)
+                queue[i--] = queue[--currentSize]; //get a new one
+                queue[currentSize] = queue[--currentNumber]; //Not leave blanks
+                break;
+            }
+            int chosen_item = choose_next_item(queue[i]);
+            sparse_array_t *active_options = queue[i]->active_options[chosen_item];
+            if (sparse_array_empty(active_options)) {
+                ++ctx->solutions;
+                free_context(&queue[i], n_items);
+                queue[i--] = queue[--currentNumber];
+                break;
+            }
+            cover(instance, queue[i], chosen_item);
+            queue[i]->num_children[queue[i]->level] = active_options->len;
+
+            for (int k = 0; k < active_options->len; k++) {
+                int option = active_options->p[k];
+                if (k + 1 == active_options->len) { //Last one
+                    queue[i]->child_num[queue[i]->level] = k;
+                    choose_option(instance, queue[i], option, chosen_item);
+                    break;
+                }
+                queue[currentNumber] = copy_context(queue[i], n_items);
+                queue[currentNumber]->child_num[queue[currentNumber]->level] = k;
+                choose_option(instance, queue[currentNumber++], option, chosen_item);
+            }
+            if (currentNumber >= NUMBER_OF_OPTIONS_TO_START)
+                break;
+        }
+        currentSize = currentNumber;
+    }
+    *queueLength = currentNumber;
+    return queue;
+}
+
+void MPIMasterSolve(instance_t *instance, context_t *ctx, int processusNumber) {
+    int numberOfElements;
+    int solutionsFound = 0;
+    int numberToDodge = 0;
+    char endOfWork = 0;
+    char workingStatus = 0;
+    int n_items = instance->n_items;
+    MPI_Status status;
+    MPI_Request request;
+    int *arrayIfDone;
+    int *processDone;
+    context_t **queue;
+    
+    if (!recoverStatus(&arrayIfDone)) {
+        queue = initMPISolve(instance, ctx, &numberOfElements);
+        arrayIfDone = malloc(numberOfElements * sizeof(int));
+        for (int i = 0 ; i < numberOfElements ; ++i)
+            arrayIfDone[i] = 0;
+    }
+    else {
+        printf("Successfully recovered from a save\n");
+        queue = initMPISolve(instance, ctx, &numberOfElements);
+    }
+
+    processDone = malloc(processusNumber * sizeof(int));        
+
+    saveStatus(arrayIfDone, numberOfElements);
+    double beginning = wtime();
+
+    printf("%d\n", numberOfElements);
+    {
+        int messageReceived = 0;
+        int i = 0;
+        for (; i < numberOfElements ; ++i) {
+            MPI_Irecv(&workingStatus, 1, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &request);
+            while (1) {
+                MPI_Test(&request, &messageReceived, &status);
+                if (messageReceived)
+                    break;
+                if (wtime() - beginning > 60) {
+                    saveStatus(arrayIfDone, numberOfElements);
+                    beginning = wtime();
+                }
+            }
+            if (workingStatus == gotResults) {
+                MPI_Recv(&solutionsFound, 1, MPI_INT, status.MPI_SOURCE, 0, MPI_COMM_WORLD, &status);
+                arrayIfDone[processDone[status.MPI_SOURCE]] = 1;
+                ctx->solutions += solutionsFound;
+                if (ctx->solutions >= max_solutions) {
+                    endOfWork = 1;
+                    MPI_Send(&endOfWork, 1, MPI_CHAR, status.MPI_SOURCE, 0, MPI_COMM_WORLD);
+                    numberToDodge = status.MPI_SOURCE;
+                    break;
+                }
+            }
+            MPI_Send(&endOfWork, 1, MPI_CHAR, status.MPI_SOURCE, 0, MPI_COMM_WORLD);
+            sendOptions(queue[i], status.MPI_SOURCE, n_items);
+            processDone[status.MPI_SOURCE] = i;
+            free_context(&queue[i], n_items);
+        }
+        endOfWork = 1;
+        for (; i < numberOfElements ; ++i)
+            free_context(&queue[i], n_items);
+        free(queue);
+    }
+    
+    for (int i = 1 ; i < processusNumber ; ++i)
+        if (i != numberToDodge) {
+            MPI_Recv(&workingStatus, 1, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            if (workingStatus == gotResults) {
+                MPI_Recv(&solutionsFound, 1, MPI_INT, status.MPI_SOURCE, 0, MPI_COMM_WORLD, &status);
+                ctx->solutions += solutionsFound;
+            }
+            MPI_Send(&endOfWork, 1, MPI_CHAR, status.MPI_SOURCE, 0, MPI_COMM_WORLD);
+        }
+
+    remove(saveFileNewName);
+    return;
+}
+
+void MPISolve(instance_t *instance, context_t *ctx, int myRank, int processusNumber) {
+    if (myRank) {
+        char endOfWork = -1;
+        char workingStatus = willingToWork;
+        int solutionsFound = 0;
+
+        int n_items = instance->n_items;
+
+        context_t *newContext = copy_context(ctx, n_items);
+
+        while (1) {
+            MPI_Send(&workingStatus, 1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
+            if (workingStatus == gotResults)
+                MPI_Send(&solutionsFound, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+
+            MPI_Recv(&endOfWork, 1, MPI_CHAR, 0, 0, MPI_COMM_WORLD, NULL);
+            if (endOfWork == 1) {
+                free_context(&newContext, instance->n_items);
+                free_context(&ctx, instance->n_items);
+                return;
+            }
+            receiveOtherContext(instance, newContext, ctx, instance->n_items);
+            solve(instance, newContext, newContext);
+            #pragma omp taskwait
+            workingStatus = gotResults;
+            solutionsFound = newContext->solutions;
+        }
+    }
+    MPIMasterSolve(instance, ctx, processusNumber);
+    return;
+}
+
+int main(int argc, char **argv) {
+	int myRank; /* rang du processus */
+	int processusNumber; /* nombre de processus */
+
+	/* Initialisation */
+	MPI_Init(&argc, &argv);
+	MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+	MPI_Comm_size(MPI_COMM_WORLD, &processusNumber);
+    NUMBER_OF_OPTIONS_TO_START = 200 * processusNumber;
+
+	instance_t *instance = NULL;
+	context_t *ctx = NULL;
+
+	if (!myRank) {
+		if (!initiation(argc, argv)){
+			MPI_Finalize();
+			return EXIT_FAILURE;
+		}
+
+	    instance = load_matrix(in_filename);
+	    ctx = backtracking_setup(instance);
+
+        {
+            int lastSlashPos = 0;
+            int currentSize = 0;
+            while (1) {
+                if (in_filename[currentSize] == '/')
+                    lastSlashPos = currentSize + 1;
+                if (in_filename[currentSize++] == '\0')
+                    break;
+            }
+            currentSize = 0;
+
+            while (currentSize < 100) {
+                if (in_filename[lastSlashPos] != '\0')
+                    saveFile[currentSize] = in_filename[lastSlashPos];
+                else
+                    break;
+                ++currentSize;
+                ++lastSlashPos;
+            }
+            if (currentSize >= 95) {
+                printf("Filename too long, cannot save in case of failure, please shorten it (consider renaming the instance)\n");
+                MPI_Finalize();
+                exit(EXIT_FAILURE);
+            }
+            currentSize -= 3; //.ec
+            saveFile[currentSize++] = '_';
+            saveFile[currentSize++] = 'M';
+            saveFile[currentSize++] = 'P';
+            saveFile[currentSize++] = 'I';
+            saveFile[currentSize++] = '.';
+            saveFile[currentSize++] = 'b';
+            saveFile[currentSize++] = 'a';
+            saveFile[currentSize++] = 'k';
+            saveFile[currentSize]   = '\0';
+
+            memcpy(saveFileNewName, saveFile, currentSize);
+            currentSize -= 3;
+            saveFileNewName[currentSize++] = 'r';
+            saveFileNewName[currentSize++] = 'e';
+            saveFileNewName[currentSize++] = 's';
+            saveFileNewName[currentSize]   = '\0';
+            //Preparing our files
+        }
+	}
+
+
+	instance = broadcastInstance(instance, myRank, processusNumber); //Now everyone knows the instance we work on
+    ctx = broadcastContext(ctx, myRank, processusNumber, instance->n_items); //Mallocs accordingly
+
+	if (!myRank)
+	    start = wtime();
+
+    max_tasks = omp_get_max_threads();
+    printf("max threads = %d\n", max_tasks);
+
+    #pragma omp parallel
+    #pragma omp single
+	MPISolve(instance, ctx, myRank, processusNumber);
+
+	if (!myRank) {
+	    printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start + timeOffset);
+
+
+	    free_context(&ctx, instance->n_items);
+	    free_instance(instance);
+	}
+    MPI_Finalize();
     exit(EXIT_SUCCESS);
 }
 
