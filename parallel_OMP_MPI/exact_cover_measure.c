@@ -923,9 +923,9 @@ char recoverStatus(int **arrayIfDone) {
     int temporary_numberOfElemens = NUMBER_OF_OPTIONS_TO_START;
     FILE *myFile = fopen(saveFileNewName, "r");
     if (myFile) {
-        if (!fscanf(myFile, "%lf", &timeOffset)) {
+        if (!fscanf(myFile, "%lf", &timeOffset))
             printf("Error while reading the time already spent\n");
-        }
+
         if (!fscanf(myFile, "%d", &NUMBER_OF_OPTIONS_TO_START)) {
             printf("Error while reading the number of elements\n");
             NUMBER_OF_OPTIONS_TO_START = temporary_numberOfElemens;
@@ -937,8 +937,7 @@ char recoverStatus(int **arrayIfDone) {
                 printf("Error while reading values\n");
                 free(*arrayIfDone);
                 return 0;
-        }
-        printf("%lf", wtime() - start + timeOffset);
+            }
         return 1;
     }
     return 0;
@@ -1118,6 +1117,9 @@ int main(int argc, char **argv) {
     instance_t *instance = NULL;
     context_t *ctx = NULL;
 
+    max_tasks = omp_get_max_threads();
+    
+
     if (!myRank) {
         if (!initiation(argc, argv)){
             MPI_Finalize();
@@ -1174,10 +1176,6 @@ int main(int argc, char **argv) {
 
 
     instance = broadcastInstance(instance, myRank, processusNumber); //Now everyone knows the instance we work on
-    ctx = broadcastContext(ctx, myRank, processusNumber, instance->n_items); //Mallocs accordingly
-
-    if (!myRank)
-        start = wtime();
 
     FILE *myFile = NULL;
 
@@ -1197,7 +1195,7 @@ int main(int argc, char **argv) {
 
             while (currentSize < 100) {
                 if (in_filename[lastSlashPos] != '\0')
-                    saveFile[currentSize] = in_filename[lastSlashPos];
+                    measureFile[currentSize] = in_filename[lastSlashPos];
                 else
                     break;
                 ++currentSize;
@@ -1223,34 +1221,36 @@ int main(int argc, char **argv) {
         myFile = fopen(measureFile, "w");
     }
 
+    int realMaxTask = max_tasks;
 
-    for (int i = 2 ; i < processusNumber ; ++i) {
-
-        if (!myRank)
-            ctx = backtracking_setup(instance);
-        ctx = broadcastContext(ctx, myRank, i, instance->n_items);
-        for (int i = 0 ; i < max_tasks ; ++i) {
-            omp_set_num_threads(i);
-            ctx = backtracking_setup(instance);
+    for (int i = 2 ; i <= processusNumber ; ++i) {
+        if (i <= myRank)
+            continue;
+        for (int j = 0 ; j < realMaxTask ; ++j) {
+            if (!myRank)
+                ctx = backtracking_setup(instance);
+            ctx = broadcastContext(ctx, myRank, i, instance->n_items);
             start = wtime();
+
+            max_tasks = j;
+            omp_set_num_threads(j);
 
             #pragma omp parallel
             #pragma omp single
             MPISolve(instance, ctx, myRank, i);
             #pragma omp taskwait
+            if (myFile)
+                fprintf(myFile, "%d %d %lf\n", i, j, wtime() - start);
             if (!myRank)
-                fprintf(myFile, "%d %lf\n", i, wtime() - start);
-            free_context(&ctx, instance->n_items);
+                free_context(&ctx, instance->n_items);
         }
-        free_instance(instance);
+
     }
 
 
     if (!myRank) {
         printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start + timeOffset);
 
-
-        free_context(&ctx, instance->n_items);
         free_instance(instance);
     }
     MPI_Finalize();

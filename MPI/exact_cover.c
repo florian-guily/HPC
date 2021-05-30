@@ -871,9 +871,9 @@ char recoverStatus(int **arrayIfDone) {
     int temporary_numberOfElemens = NUMBER_OF_OPTIONS_TO_START;
     FILE *myFile = fopen(saveFileNewName, "r");
     if (myFile) {
-        if (!fscanf(myFile, "%lf", &timeOffset)) {
+        if (!fscanf(myFile, "%lf", &timeOffset))
             printf("Error while reading the time already spent\n");
-        }
+
         if (!fscanf(myFile, "%d", &NUMBER_OF_OPTIONS_TO_START)) {
             printf("Error while reading the number of elements\n");
             NUMBER_OF_OPTIONS_TO_START = temporary_numberOfElemens;
@@ -886,7 +886,6 @@ char recoverStatus(int **arrayIfDone) {
                 free(*arrayIfDone);
                 return 0;
         }
-        printf("%lf", wtime() - start + timeOffset);
         return 1;
     }
     return 0;
