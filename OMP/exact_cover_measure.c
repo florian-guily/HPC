@@ -695,46 +695,70 @@ int main(int argc, char **argv) {
         usage(argv);
     next_report = report_delta;
 
-
+/*
     instance_t * instance = load_matrix(in_filename);
     context_t * ctx = backtracking_setup(instance);
+*/
     max_tasks = omp_get_max_threads();
     printf("max tasks = %d\n", max_tasks);
-    /* {
-        context_t * ctxCopy = copy_context(ctx, instance->n_items);
-            {
-                for (int i = 0 ; i < instance->n_items ; ++i) {
-                    if ((ctx->active_options[i]->len != ctxCopy->active_options[i]->len)
-                        || (ctx->active_options[i]->capacity != ctxCopy->active_options[i]->capacity)
-                        || (ctx->chosen_options[i] != 
-                            ctxCopy->chosen_options[i])
-                        || (ctx->child_num[i] != 
-                            ctxCopy->child_num[i])
-                        || (ctx->num_children[i] != 
-                            ctxCopy->num_children[i]))
-                        printf("ERREEUEURUURURUUEUUUR");
-                    for (int j = 0 ; j < ctx->active_options[i]->capacity ; ++j)
-                        if ((ctx->active_options[i]->p[j] != 
-                            ctxCopy->active_options[i]->p[j])
-                            || (ctx->active_options[i]->q[j] != ctxCopy->active_options[i]->q[j]))
-                            printf("FHIEBHGBEHGBHEBGB");
-                }
+
+
+    char measureFile[101];
+        {
+            int lastSlashPos = 0;
+            int currentSize = 0;
+            while (1) {
+                if (in_filename[currentSize] == '/')
+                    lastSlashPos = currentSize + 1;
+                if (in_filename[currentSize++] == '\0')
+                    break;
             }
-        free_context(&ctxCopy, instance->n_items);
-    } */
+            currentSize = 0;
 
+            while (currentSize < 100) {
+                if (in_filename[lastSlashPos] != '\0')
+                    measureFile[currentSize] = in_filename[lastSlashPos];
+                else
+                    break;
+                ++currentSize;
+                ++lastSlashPos;
+            }
+            if (currentSize >= 95) {
+                printf("Filename too long, cannot save in case of failure, please shorten it (consider renaming the instance)\n");
+                exit(EXIT_FAILURE);
+            }
+            currentSize -= 3; //.ec
+            measureFile[currentSize++] = '_';
+            measureFile[currentSize++] = 'O';
+            measureFile[currentSize++] = 'M';
+            measureFile[currentSize++] = 'P';
+            measureFile[currentSize++] = '.';
+            measureFile[currentSize++] = 'm';
+            measureFile[currentSize++] = 'e';
+            measureFile[currentSize++] = 's';
+            measureFile[currentSize]   = '\0';
+        }
 
-    start = wtime();
-    #pragma omp parallel 
-    {
-        context_t * ctxCopy = copy_context(ctx, instance->n_items);
-        #pragma omp single
-        {solve(instance, ctxCopy, ctx, ctx->level);}
+    FILE *myFile = fopen(measureFile, "w");
+    if (myFile) {
+        instance_t *instance = load_matrix(in_filename);
+        for (int i = 0 ; i < max_tasks ; ++i) {
+            omp_set_num_threads(i);
+            context_t *ctx = backtracking_setup(instance);
+            start = wtime();
+
+            #pragma omp parallel
+            #pragma omp single
+            solve(instance, ctx, ctx, 0);
+            #pragma omp taskwait
+            fprintf(myFile, "%d %lf\n", i, wtime() - start);
+            free_context(&ctx, instance->n_items);
+        }
+        free_instance(instance);
     }
-    printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
 
-    free_context(&ctx, instance->n_items);
-    free_instance(instance);
+    printf("FINI\n");
+
     exit(EXIT_SUCCESS);
 }
 

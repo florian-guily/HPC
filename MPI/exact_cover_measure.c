@@ -9,7 +9,6 @@
 
 #include <mpi.h>
 #include <unistd.h>
-#include <omp.h>
 
 double start = 0.0;
 double timeOffset = 0.0;
@@ -23,9 +22,6 @@ char saveFile[101];
 char saveFileNewName[101];
 
 int NUMBER_OF_OPTIONS_TO_START = 20;
-
-volatile int freeThreads = 0;                   //Nombre de threads inoccupés
-
 
 typedef struct instance_t {
         int n_items;
@@ -224,21 +220,6 @@ bool item_is_active(const context_t *ctx, int item) {
 }
 
 void solution_found(const instance_t *instance, context_t *ctx) {
-    ctx->solutions++;
-    if (!print_solutions)
-        return;
-    printf("Trouvé une nouvelle solution au niveau %d après %lld noeuds\n", ctx->level, ctx->nodes);
-    printf("Options : \n");
-    for (int i = 0; i < ctx->level; i++) {
-        int option = ctx->chosen_options[i];
-        printf("+ %d : ", option);
-        print_option(instance, option);
-    }
-    printf("\n----------------------------------------------------\n");
-}
-
-void solution_foundAtomic(const instance_t *instance, context_t *ctx) {
-    #pragma omp atomic
     ctx->solutions++;
     if (!print_solutions)
         return;
@@ -562,15 +543,12 @@ context_t * backtracking_setup(const instance_t *instance) {
     return ctx;
 }
 
-void solve(const instance_t *instance, context_t *ctx, context_t *realContext, int level) {
+void solve(const instance_t *instance, context_t *ctx) {
     ctx->nodes++;
     if (ctx->nodes == next_report)
         progress_report(ctx);
     if (sparse_array_empty(ctx->active_items)) {
-        if (ctx == realContext)
-            solution_foundAtomic(instance, ctx);
-        else
-            solution_found(instance, ctx);
+        solution_found(instance, ctx);
         return;                         /* succès : plus d'objet actif */
     }
     int chosen_item = choose_next_item(ctx);
@@ -579,34 +557,14 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext, i
         return;           /* échec : impossible de couvrir chosen_item */
     cover(instance, ctx, chosen_item);
     ctx->num_children[ctx->level] = active_options->len;
-
     for (int k = 0; k < active_options->len; k++) {
-        if (freeThreads > 0) {
-           #pragma omp atomic
-           --freeThreads;
-            context_t *ctxCopy = copy_context(ctx, instance->n_items);
-            #pragma omp task
-            {
-                active_options = ctxCopy->active_options[chosen_item];
-                int option = active_options->p[k];
-                ctxCopy->child_num[level] = k;
-                choose_option(instance, ctxCopy, option, chosen_item);
-                solve(instance, ctxCopy, realContext, level + 1);
-                unchoose_option(instance, ctxCopy, option, chosen_item);
-                #pragma omp atomic
-                realContext->solutions += ctxCopy->solutions;
-                free_context(&ctxCopy, instance->n_items);
-                #pragma omp atomic
-                ++freeThreads;
-            }
-        }
-        else {
-            int option = active_options->p[k];
-            ctx->child_num[level] = k;
-            choose_option(instance, ctx, option, chosen_item);
-            solve(instance, ctx, realContext, level + 1);
-            unchoose_option(instance, ctx, option, chosen_item);
-        }
+        int option = active_options->p[k];
+        ctx->child_num[ctx->level] = k;
+        choose_option(instance, ctx, option, chosen_item);
+        solve(instance, ctx);
+        if (ctx->solutions >= max_solutions)
+            return;
+        unchoose_option(instance, ctx, option, chosen_item);
     }
 
     uncover(instance, ctx, chosen_item);                      /* backtrack */
@@ -624,15 +582,12 @@ void free_instance(instance_t *instance) {
 }
 
 char initiation(int argc, char *argv[]) {
-    int threads = omp_get_num_procs();
-
-    struct option longopts[7] = {
+    struct option longopts[6] = {
         {"in", required_argument, NULL, 'i'},
         {"progress-report", required_argument, NULL, 'v'},
         {"print-solutions", no_argument, NULL, 'p'},
         {"stop-after", required_argument, NULL, 's'},
         {"startLim", required_argument, NULL, 'l'},
-        {"threads", required_argument, NULL, 't'},
         {NULL, 0, NULL, 0}
     };
 
@@ -654,11 +609,6 @@ char initiation(int argc, char *argv[]) {
         case 'l':
             NUMBER_OF_OPTIONS_TO_START = atoi(optarg);
             break;
-        case 't':
-            freeThreads = atoi(optarg);
-            threads = threads >= freeThreads ? freeThreads : threads;
-            omp_set_num_threads(threads);
-            break;
         default:
             errx(1, "Unknown option\n");
         }
@@ -668,10 +618,6 @@ char initiation(int argc, char *argv[]) {
         return 0; //Fail
     }
     next_report = report_delta;
-
-    freeThreads = threads - 1;
-    printf("Using %d threads\n", threads);
-
     return 1; //Success
 }
 
@@ -1034,7 +980,7 @@ void MPIMasterSolve(instance_t *instance, context_t *ctx, int processusNumber) {
                 MPI_Test(&request, &messageReceived, &status);
                 if (messageReceived)
                     break;
-                if (wtime() - beginning > 60) {
+                if (wtime() - beginning > 600) {
                     saveStatus(arrayIfDone, numberOfElements);
                     beginning = wtime();
                 }
@@ -1097,8 +1043,7 @@ void MPISolve(instance_t *instance, context_t *ctx, int myRank, int processusNum
                 return;
             }
             receiveOtherContext(instance, newContext, ctx, instance->n_items);
-            solve(instance, newContext, newContext, newContext->level);
-            #pragma omp taskwait
+            solve(instance, newContext);
             workingStatus = gotResults;
             solutionsFound = newContext->solutions;
         }
@@ -1181,9 +1126,65 @@ int main(int argc, char **argv) {
 	if (!myRank)
 	    start = wtime();
 
-    #pragma omp parallel
-    #pragma omp single
-	MPISolve(instance, ctx, myRank, processusNumber);
+    FILE *myFile = NULL;
+
+    if (!myRank) {
+
+        char measureFile[101];
+        {
+            int lastSlashPos = 0;
+            int currentSize = 0;
+            while (1) {
+                if (in_filename[currentSize] == '/')
+                    lastSlashPos = currentSize + 1;
+                if (in_filename[currentSize++] == '\0')
+                    break;
+            }
+            currentSize = 0;
+
+            while (currentSize < 100) {
+                if (in_filename[lastSlashPos] != '\0')
+                    saveFile[currentSize] = in_filename[lastSlashPos];
+                else
+                    break;
+                ++currentSize;
+                ++lastSlashPos;
+            }
+            if (currentSize >= 95) {
+                printf("Filename too long, cannot save in case of failure, please shorten it (consider renaming the instance)\n");
+                MPI_Finalize();
+                exit(EXIT_FAILURE);
+            }
+            currentSize -= 3; //.ec
+            measureFile[currentSize++] = '_';
+            measureFile[currentSize++] = 'M';
+            measureFile[currentSize++] = 'P';
+            measureFile[currentSize++] = 'I';
+            measureFile[currentSize++] = '.';
+            measureFile[currentSize++] = 'm';
+            measureFile[currentSize++] = 'e';
+            measureFile[currentSize++] = 's';
+            measureFile[currentSize]   = '\0';
+        }
+
+        myFile = fopen(measureFile, "w");
+    }
+
+
+    for (int i = 2 ; i < processusNumber ; ++i) {
+        if (!myRank)
+            ctx = backtracking_setup(instance);
+        ctx = broadcastContext(ctx, myRank, i, instance->n_items);
+        start = wtime();
+
+        #pragma omp parallel
+        #pragma omp single
+    	MPISolve(instance, ctx, myRank, i);
+        #pragma omp taskwait
+        if (myFile)
+            fprintf(myFile, "%d %lf\n", i, wtime() - start);
+    }
+
 
 	if (!myRank) {
 	    printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start + timeOffset);

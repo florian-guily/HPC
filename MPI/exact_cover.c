@@ -622,80 +622,80 @@ char initiation(int argc, char *argv[]) {
 }
 
 int findNameLength(char *namePointer) {
-	int length = 0;
-	while (namePointer[++length] != '\0' && length < 64);
-	return length < 64 ? length : 1;
+    int length = 0;
+    while (namePointer[++length] != '\0' && length < 64);
+    return length < 64 ? length : 1;
 }
 
 void sendInstance(instance_t *instance, int targetRank) {
-	int values[3] = {instance->n_items, instance->n_primary, instance->n_options};
-	MPI_Send(values, 3, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
-	for (int i = 0 ; i < instance->n_items; ++i) {
-		int nameLength = findNameLength(instance->item_name[i]);
-		if (nameLength != 1) {
-			MPI_Send(&nameLength, 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
-			MPI_Send(instance->item_name[i], nameLength, MPI_BYTE, targetRank, 0, MPI_COMM_WORLD);
-		}
-		else {
-			char tmp = '\0';
-			MPI_Send(&nameLength, 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
-			MPI_Send(&tmp, 1, MPI_BYTE, targetRank, 0, MPI_COMM_WORLD);			
-		}
-	}
-	MPI_Send(instance->options, instance->n_options * instance->n_items, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
-	MPI_Send(instance->ptr, instance->n_options + 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+    int values[3] = {instance->n_items, instance->n_primary, instance->n_options};
+    MPI_Send(values, 3, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+    for (int i = 0 ; i < instance->n_items; ++i) {
+        int nameLength = findNameLength(instance->item_name[i]);
+        if (nameLength != 1) {
+            MPI_Send(&nameLength, 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+            MPI_Send(instance->item_name[i], nameLength, MPI_BYTE, targetRank, 0, MPI_COMM_WORLD);
+        }
+        else {
+            char tmp = '\0';
+            MPI_Send(&nameLength, 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+            MPI_Send(&tmp, 1, MPI_BYTE, targetRank, 0, MPI_COMM_WORLD);         
+        }
+    }
+    MPI_Send(instance->options, instance->n_options * instance->n_items, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+    MPI_Send(instance->ptr, instance->n_options + 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
 }
 
 instance_t *receiveInstance() {
-	instance_t *newInstance = malloc(sizeof(instance_t));
-	int values[3];
-	MPI_Recv(values, 3, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
-	newInstance->n_items = values[0];
-	newInstance->n_primary = values[1];
-	newInstance->n_options = values[2];
+    instance_t *newInstance = malloc(sizeof(instance_t));
+    int values[3];
+    MPI_Recv(values, 3, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+    newInstance->n_items = values[0];
+    newInstance->n_primary = values[1];
+    newInstance->n_options = values[2];
 
-	newInstance->item_name = malloc(newInstance->n_items * sizeof(char *));
-	newInstance->ptr = malloc((newInstance->n_options + 1) * sizeof(char *));
-	newInstance->options = malloc(newInstance->n_items * newInstance->n_options * sizeof(char *));
+    newInstance->item_name = malloc(newInstance->n_items * sizeof(char *));
+    newInstance->ptr = malloc((newInstance->n_options + 1) * sizeof(char *));
+    newInstance->options = malloc(newInstance->n_items * newInstance->n_options * sizeof(char *));
 
-	for (int i = 0 ; i < newInstance->n_items ; ++i) {
-		int nameLength;
-		MPI_Recv(&nameLength, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
-		newInstance->item_name[i] = malloc(nameLength);
-		MPI_Recv(newInstance->item_name[i], nameLength, MPI_BYTE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
-	}
-	MPI_Recv(newInstance->options, newInstance->n_options * newInstance->n_items, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
-	MPI_Recv(newInstance->ptr, newInstance->n_options + 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
-	return newInstance;
+    for (int i = 0 ; i < newInstance->n_items ; ++i) {
+        int nameLength;
+        MPI_Recv(&nameLength, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+        newInstance->item_name[i] = malloc(nameLength);
+        MPI_Recv(newInstance->item_name[i], nameLength, MPI_BYTE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+    }
+    MPI_Recv(newInstance->options, newInstance->n_options * newInstance->n_items, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+    MPI_Recv(newInstance->ptr, newInstance->n_options + 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+    return newInstance;
 }
 
 void sendSparseArray(sparse_array_t *sparseArray, int targetRank) {
-	int values[2] = {sparseArray->len, sparseArray->capacity};
-	int *arrays = malloc(2 * sparseArray->capacity * sizeof(int));
-	memcpy(arrays, sparseArray->p, sparseArray->capacity * sizeof(int));
-	memcpy(arrays + sparseArray->capacity, sparseArray->q, sparseArray->capacity * sizeof(int));
+    int values[2] = {sparseArray->len, sparseArray->capacity};
+    int *arrays = malloc(2 * sparseArray->capacity * sizeof(int));
+    memcpy(arrays, sparseArray->p, sparseArray->capacity * sizeof(int));
+    memcpy(arrays + sparseArray->capacity, sparseArray->q, sparseArray->capacity * sizeof(int));
 
-	MPI_Send(values, 2, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
-	MPI_Send(arrays, 2 * sparseArray->capacity, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
-	free(arrays);
+    MPI_Send(values, 2, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+    MPI_Send(arrays, 2 * sparseArray->capacity, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+    free(arrays);
 }
 
 sparse_array_t *receiveSparseArray() {
-	sparse_array_t *newSparseArray = malloc(sizeof(sparse_array_t));
-	int values[2];
-	MPI_Recv(values, 2, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
-	newSparseArray->len = values[0];
-	newSparseArray->capacity = values[1];
-	int *arrays = malloc(2 * newSparseArray->capacity * sizeof(int));
-	MPI_Recv(arrays, 2 * newSparseArray->capacity, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+    sparse_array_t *newSparseArray = malloc(sizeof(sparse_array_t));
+    int values[2];
+    MPI_Recv(values, 2, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+    newSparseArray->len = values[0];
+    newSparseArray->capacity = values[1];
+    int *arrays = malloc(2 * newSparseArray->capacity * sizeof(int));
+    MPI_Recv(arrays, 2 * newSparseArray->capacity, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
 
-	newSparseArray->p = malloc(newSparseArray->capacity * sizeof(int));
-	newSparseArray->q = malloc(newSparseArray->capacity * sizeof(int));
-	memcpy(newSparseArray->p, arrays, newSparseArray->capacity * sizeof(int));
-	memcpy(newSparseArray->q, arrays + newSparseArray->capacity, newSparseArray->capacity * sizeof(int));
+    newSparseArray->p = malloc(newSparseArray->capacity * sizeof(int));
+    newSparseArray->q = malloc(newSparseArray->capacity * sizeof(int));
+    memcpy(newSparseArray->p, arrays, newSparseArray->capacity * sizeof(int));
+    memcpy(newSparseArray->q, arrays + newSparseArray->capacity, newSparseArray->capacity * sizeof(int));
 
-	free(arrays);
-	return newSparseArray;
+    free(arrays);
+    return newSparseArray;
 }
 
 void receiveOtherSparseArray(sparse_array_t *newSparseArray) {
@@ -722,44 +722,44 @@ void copyOtherSparseArray(sparse_array_t *newSparseArray, sparse_array_t *oldSpa
 }
 
 void sendContext(context_t *contexte, int targetRank, int n) {
-	int *arrays = malloc((3 * n + 1) * sizeof(int));
-	memcpy(arrays,			contexte->chosen_options, n);
-	memcpy(arrays + n,		contexte->child_num, n);
-	memcpy(arrays + 2 * n,	contexte->num_children, n);
-	arrays[3 * n] = contexte->level;
-	MPI_Send(arrays, 3 * n + 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
+    int *arrays = malloc((3 * n + 1) * sizeof(int));
+    memcpy(arrays,          contexte->chosen_options, n);
+    memcpy(arrays + n,      contexte->child_num, n);
+    memcpy(arrays + 2 * n,  contexte->num_children, n);
+    arrays[3 * n] = contexte->level;
+    MPI_Send(arrays, 3 * n + 1, MPI_INT, targetRank, 0, MPI_COMM_WORLD);
 
-	sendSparseArray(contexte->active_items, targetRank);
-	for (int i = 0; i < n ; ++i)
-		sendSparseArray(contexte->active_options[i], targetRank);
+    sendSparseArray(contexte->active_items, targetRank);
+    for (int i = 0; i < n ; ++i)
+        sendSparseArray(contexte->active_options[i], targetRank);
 
-	free(arrays);
+    free(arrays);
 }
 
 context_t *receiveContext(int n) {
-	context_t *newContext = malloc(sizeof(context_t));
+    context_t *newContext = malloc(sizeof(context_t));
 
-	newContext->nodes = 0;
-	newContext->solutions = 0;
+    newContext->nodes = 0;
+    newContext->solutions = 0;
 
-	newContext->chosen_options = malloc(n * sizeof(int));
-	newContext->child_num = 	 malloc(n * sizeof(int));
-	newContext->num_children = 	 malloc(n * sizeof(int));
-	newContext->active_options = malloc(n * sizeof(sparse_array_t));
+    newContext->chosen_options = malloc(n * sizeof(int));
+    newContext->child_num =      malloc(n * sizeof(int));
+    newContext->num_children =   malloc(n * sizeof(int));
+    newContext->active_options = malloc(n * sizeof(sparse_array_t));
 
-	int *arrays = malloc((3 * n + 1) * sizeof(int));
-	MPI_Recv(arrays, 3 * n + 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
-	memcpy(newContext->chosen_options, 	arrays, n);
-	memcpy(newContext->child_num, 		arrays + n, n);
-	memcpy(newContext->num_children, 	arrays + 2 * n, n);
-	newContext->level = arrays[3 * n];
+    int *arrays = malloc((3 * n + 1) * sizeof(int));
+    MPI_Recv(arrays, 3 * n + 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, NULL);
+    memcpy(newContext->chosen_options,  arrays, n);
+    memcpy(newContext->child_num,       arrays + n, n);
+    memcpy(newContext->num_children,    arrays + 2 * n, n);
+    newContext->level = arrays[3 * n];
 
-	newContext->active_items = receiveSparseArray();
-	for (int i = 0 ; i < n ; ++i)
-		newContext->active_options[i] = receiveSparseArray();
+    newContext->active_items = receiveSparseArray();
+    for (int i = 0 ; i < n ; ++i)
+        newContext->active_options[i] = receiveSparseArray();
 
-	free(arrays);
-	return newContext;
+    free(arrays);
+    return newContext;
 }
 
 void sendOptions(context_t *contexte, int targetRank, int n) {
@@ -825,16 +825,16 @@ void receiveOtherContext(context_t *newContext, int n) {
 }
 */
 instance_t *broadcastInstance(instance_t *instance, int myRank, int processusNumber) {
-	if (myRank)
-		instance = receiveInstance();
-	int currentTarget = 1;
-	while (currentTarget <= myRank)
-		currentTarget *= 2;
-	while (currentTarget + myRank < processusNumber) {
-		sendInstance(instance, myRank + currentTarget);
-		currentTarget *= 2;
-	}
-	return instance;
+    if (myRank)
+        instance = receiveInstance();
+    int currentTarget = 1;
+    while (currentTarget <= myRank)
+        currentTarget *= 2;
+    while (currentTarget + myRank < processusNumber) {
+        sendInstance(instance, myRank + currentTarget);
+        currentTarget *= 2;
+    }
+    return instance;
 }
 
 context_t *broadcastContext(context_t *context, int myRank, int processusNumber, int n) {
@@ -1053,26 +1053,26 @@ void MPISolve(instance_t *instance, context_t *ctx, int myRank, int processusNum
 }
 
 int main(int argc, char **argv) {
-	int myRank; /* rang du processus */
-	int processusNumber; /* nombre de processus */
+    int myRank; /* rang du processus */
+    int processusNumber; /* nombre de processus */
 
-	/* Initialisation */
-	MPI_Init(&argc, &argv);
-	MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-	MPI_Comm_size(MPI_COMM_WORLD, &processusNumber);
+    /* Initialisation */
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    MPI_Comm_size(MPI_COMM_WORLD, &processusNumber);
     NUMBER_OF_OPTIONS_TO_START = 200 * processusNumber;
 
-	instance_t *instance = NULL;
-	context_t *ctx = NULL;
+    instance_t *instance = NULL;
+    context_t *ctx = NULL;
 
-	if (!myRank) {
-		if (!initiation(argc, argv)){
-			MPI_Finalize();
-			return EXIT_FAILURE;
-		}
+    if (!myRank) {
+        if (!initiation(argc, argv)){
+            MPI_Finalize();
+            return EXIT_FAILURE;
+        }
 
-	    instance = load_matrix(in_filename);
-	    ctx = backtracking_setup(instance);
+        instance = load_matrix(in_filename);
+        ctx = backtracking_setup(instance);
 
         {
             int lastSlashPos = 0;
@@ -1117,25 +1117,25 @@ int main(int argc, char **argv) {
             saveFileNewName[currentSize]   = '\0';
             //Preparing our files
         }
-	}
+    }
 
 
-	instance = broadcastInstance(instance, myRank, processusNumber); //Now everyone knows the instance we work on
+    instance = broadcastInstance(instance, myRank, processusNumber); //Now everyone knows the instance we work on
     ctx = broadcastContext(ctx, myRank, processusNumber, instance->n_items); //Mallocs accordingly
 
-	if (!myRank)
-	    start = wtime();
+    if (!myRank)
+        start = wtime();
 
 
-	MPISolve(instance, ctx, myRank, processusNumber);
+    MPISolve(instance, ctx, myRank, processusNumber);
 
-	if (!myRank) {
-	    printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start + timeOffset);
+    if (!myRank) {
+        printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start + timeOffset);
 
 
-	    free_context(&ctx, instance->n_items);
-	    free_instance(instance);
-	}
+        free_context(&ctx, instance->n_items);
+        free_instance(instance);
+    }
     MPI_Finalize();
     exit(EXIT_SUCCESS);
 }
