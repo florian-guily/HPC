@@ -564,7 +564,7 @@ context_t * backtracking_setup(const instance_t *instance) {
     return ctx;
 }
 
-void solve(const instance_t *instance, context_t *ctx, context_t *realContext, int level) {
+void solve(const instance_t *instance, context_t *ctx, context_t *realContext, int max_tasks,int level) {
     ++realContext->nodes;
     if (realContext->nodes == next_report)
         progress_report(realContext);
@@ -590,7 +590,7 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext, i
             int option = active_options->p[k];
             ctx->child_num[level] = k;
             choose_option(instance, ctx, option, chosen_item);
-            solve(instance, ctx, realContext, level + 1);
+            solve(instance, ctx, realContext, max_tasks, level + 1);
             // if (ctx->solutions >= max_solutions)
             //     return;
             unchoose_option(instance, ctx, option, chosen_item);
@@ -605,7 +605,7 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext, i
                 int option = active_options->p[k];
                 ctxCopy->child_num[level] = k;
                 choose_option(instance, ctxCopy, option, chosen_item);
-                solve(instance, ctxCopy, realContext, level + 1);
+                solve(instance, ctxCopy, realContext, max_tasks, level + 1);
                 unchoose_option(instance, ctxCopy, option, chosen_item);
                 #pragma omp atomic
                 realContext->solutions += ctxCopy->solutions;
@@ -1072,7 +1072,7 @@ void MPIMasterSolve(instance_t *instance, context_t *ctx, int processusNumber) {
     return;
 }
 
-void MPISolve(instance_t *instance, context_t *ctx, int myRank, int processusNumber) {
+void MPISolve(instance_t *instance, context_t *ctx, int myRank, int processusNumber, int max_tasks) {
     if (myRank) {
         char endOfWork = -1;
         char workingStatus = willingToWork;
@@ -1094,7 +1094,7 @@ void MPISolve(instance_t *instance, context_t *ctx, int myRank, int processusNum
                 return;
             }
             receiveOtherContext(instance, newContext, ctx, instance->n_items);
-            solve(instance, newContext, newContext, newContext->level);
+            solve(instance, newContext, newContext, max_tasks, newContext->level);
             #pragma omp taskwait
             workingStatus = gotResults;
             solutionsFound = newContext->solutions;
@@ -1222,22 +1222,23 @@ int main(int argc, char **argv) {
     }
 
     int realMaxTask = max_tasks;
-
+    int max_threads = omp_get_max_threads();
     for (int i = 2 ; i <= processusNumber ; ++i) {
         if (i <= myRank)
             continue;
-        for (int j = 0 ; j < realMaxTask ; ++j) {
+        
+        for (int j = 1 ; j < max_threads+1 ; ++j) {
             if (!myRank)
                 ctx = backtracking_setup(instance);
             ctx = broadcastContext(ctx, myRank, i, instance->n_items);
             start = wtime();
 
-            max_tasks = j;
+            //int max_tasks = j;
             omp_set_num_threads(j);
 
             #pragma omp parallel
             #pragma omp single
-            MPISolve(instance, ctx, myRank, i);
+            MPISolve(instance, ctx, myRank, i, j);
             #pragma omp taskwait
             if (myFile)
                 fprintf(myFile, "%d %d %lf\n", i, j, wtime() - start);
