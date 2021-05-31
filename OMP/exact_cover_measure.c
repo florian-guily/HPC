@@ -16,7 +16,7 @@ bool print_solutions = false;          // affiche chaque solution
 long long report_delta = 1e6;          // affiche un rapport tous les ... noeuds
 long long next_report;                 // prochain rapport affiché au noeud...
 long long max_solutions = 0x7fffffffffffffff;        // stop après ... solutions
-int max_tasks = 0;
+// int max_tasks = 0;
 int nb_task = 0;
 int max_level = 4;
 
@@ -596,14 +596,14 @@ context_t * backtracking_setup(const instance_t *instance) {
     uncover(instance, ctx, chosen_item);                      // backtrack 
 } */
 
-void solve(const instance_t *instance, context_t *ctx, context_t *realContext, int level) {
+void solve(const instance_t *instance, context_t *ctx, context_t *realContext, int level, int max_tasks) {
     ++realContext->nodes;
     if (realContext->nodes == next_report)
         progress_report(realContext);
 
     if (sparse_array_empty(ctx->active_items)) {
-        //solution_found(instance, realContext);
-        ++ctx->solutions;
+        solution_found(instance, ctx);
+        //++ctx->solutions;
         return;                         // succès : plus d'objet actif
     }
     int chosen_item = choose_next_item(ctx);
@@ -622,7 +622,7 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext, i
             int option = active_options->p[k];
             ctx->child_num[level] = k;
             choose_option(instance, ctx, option, chosen_item);
-            solve(instance, ctx, realContext, level + 1);
+            solve(instance, ctx, realContext, level + 1, max_tasks);
             // if (ctx->solutions >= max_solutions)
             //     return;
             unchoose_option(instance, ctx, option, chosen_item);
@@ -637,7 +637,7 @@ void solve(const instance_t *instance, context_t *ctx, context_t *realContext, i
                 int option = active_options->p[k];
                 ctxCopy->child_num[level] = k;
                 choose_option(instance, ctxCopy, option, chosen_item);
-                solve(instance, ctxCopy, realContext, level + 1);
+                solve(instance, ctxCopy, realContext, level + 1, max_tasks);
                 unchoose_option(instance, ctxCopy, option, chosen_item);
                 #pragma omp atomic
                 realContext->solutions += ctxCopy->solutions;
@@ -661,41 +661,6 @@ void free_instance(instance_t *instance) {
     free(instance->options);
 
     free(instance);
-}
-
-int fakeMain(int argc, char **argv, char *filename, int i) {
-
-/*
-    instance_t * instance = load_matrix(in_filename);
-    context_t * ctx = backtracking_setup(instance);
-*/
-    max_tasks = i;
-    nb_task = 0;
-    printf("max tasks = %d\n", max_tasks);
-
-    instance_t *instance = load_matrix(in_filename);
-    context_t *ctx = backtracking_setup(instance);
-    start = wtime();
-    #pragma omp parallel 
-    {
-        context_t * ctxCopy = copy_context(ctx, instance->n_items);
-        #pragma omp single
-        {solve(instance, ctxCopy, ctx, ctx->level);}
-        #pragma omp taskwait
-    }
-    printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, wtime() - start);
-
-    FILE *myFile = fopen(filename, "a");
-    if (myFile) {
-        printf("%lld\n", ctx->solutions);
-        fprintf(myFile, "%d %lf\n", i, wtime() - start);
-    }
-
-    free_context(&ctx, instance->n_items);
-    free_instance(instance);
-    printf("FINI\n");
-
-    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -729,6 +694,14 @@ int main(int argc, char **argv) {
     if (in_filename == NULL)
         usage(argv);
     next_report = report_delta;
+
+/*
+    instance_t * instance = load_matrix(in_filename);
+    context_t * ctx = backtracking_setup(instance);
+*/
+    //max_tasks = omp_get_max_threads();
+    // printf("max tasks = %d\n", max_tasks);
+
 
     char measureFile[101];
         {
@@ -767,10 +740,31 @@ int main(int argc, char **argv) {
         }
 
     FILE *myFile = fopen(measureFile, "w");
-    fclose(myFile);
+    int max_threads = omp_get_max_threads();
+    if (myFile) {
+        instance_t *instance = load_matrix(in_filename);
+        for (int i = 1 ; i < max_threads+1; ++i) {
+            omp_set_num_threads(i);
+            int max_tasks = i;
+            context_t *ctx = backtracking_setup(instance);
+            context_t *ctxCopy = copy_context(ctx, instance->n_items);
+            start = wtime();
 
-    for (int i = 0 ; i < omp_get_max_threads() ; ++i) {
-        fakeMain(argc, argv, measureFile, i);
+            #pragma omp parallel
+            #pragma omp single
+            solve(instance, ctxCopy, ctx, ctx->level, max_tasks);
+            #pragma omp taskwait
+            printf("nb_task = %d\n", nb_task);
+            fprintf(myFile, "%d %lf nb_sol:%lld\n", i, wtime() - start, ctx->solutions);
+            free_context(&ctx, instance->n_items);
+            free_context(&ctxCopy, instance->n_items);
+        }
+        free_instance(instance);
     }
+
+    printf("FINI\n");
+
+    exit(EXIT_SUCCESS);
 }
+
 
